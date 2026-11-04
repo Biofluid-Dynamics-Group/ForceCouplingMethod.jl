@@ -160,9 +160,17 @@ below is adopted only on a measured win against it, and outcomes are recorded he
   (`FFCMMobility` re-uploads `Y` every `mul!`); a zero-copy fast path when the caller
   already holds device arrays; staging-buffer minimisation.
 
-Measured so far (RTX 2080 Ti, driver 460.27.04): the port at the reference architecture
-reached 111.7 % of the reference implementation's hashing+compute throughput at
-``N \approx 1.9 \times 10^5``, 256³ grid, `Float32` — with per-call staging included —
-and the FFT-library-vintage explanation for that edge was tested and refuted (the
-reference binary ran no faster under the newer cuFFT; details in
-`benchmark/cufcm-baseline.md`).
+Measured so far: on an RTX 2080 Ti, on the paper's five §5.2 problems, with positions and
+forces already on the GPU. Both codes were timed over the same whole application,
+including the reference implementation's work outside its own step timers.
+
+- **`Float32`:** the port took 0.72–0.87 of the reference's time. Most of that lead comes
+  from the reference's pair correction, which does part of its arithmetic in double
+  precision. Without that, an estimate puts the port level on the smallest problem and
+  6–17 % slower on the other four, mostly in the FFT step and interpolation.
+- **`Float64`:** the port took 0.81–0.92 of the reference's time on the three larger
+  problems, and 1.02 on the smallest.
+
+An earlier single-problem figure, 111.7 % of the reference's throughput, compared the
+port's fastest call with the reference's average; average against average it was about
+109 %. Details are in `benchmark/cufcm-baseline.md`.

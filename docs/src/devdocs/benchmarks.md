@@ -171,15 +171,16 @@ the card's 11 GB in double precision.
 | 12.8 % (500³ grid, 1,955,695 particles) | 206 ms | 9,520,000 | 10,300,000 | — | — |
 
 The whole call is timed as users see it, with the positions, forces and velocities in
-computer memory. The paper reports a best speed of about 7 million PTPS on this GPU model
-in single precision (Fig. 2), from code that repeats the calculation on data kept on the
-GPU, so the closest comparison is the column with the data on the GPU: FFCM.jl reaches 7.9
-to 11.4 million PTPS from 0.2 % upwards, and 5.3 million at the most dilute suspension,
-where a call takes under 1.5 ms and the fixed cost of each call weighs most. The paper's
-figure comes from its own code and the software of its time, so this shows that FFCM.jl
-reaches the paper's speed on the same card; how two codes compare needs both run on the
-same machine and software. Double precision is 4 to 5 times slower than single on this
-card: GeForce cards do double-precision arithmetic far more slowly than single.
+computer memory. The paper defines PTPS as the number of particles divided by the average
+time to apply the mobility matrix (§5.2). Read off its Fig. 2 (the same GPU model, single
+precision), the peak values range from about 6.6 million PTPS at 0.05 % to about 8.5
+million. With the data already on the GPU, ForceCouplingMethod.jl reaches more at 0.2,
+0.8 and 12.8 % (9.6, 11.4 and 10.3 million) and less at 0.05 and 3.2 % (5.3 and 7.9
+million); at 0.05 % a call takes under 1.5 ms, and the fixed cost of each call weighs
+most. The paper's figures come from its own code and the software of its time, and Table
+3's settings were tuned for that code, so this is only a rough comparison. Double
+precision is 4 to 5 times slower than single on this card: GeForce cards do
+double-precision arithmetic far more slowly than single.
 
 Where the time goes (medians, Float32, data on the GPU). The Stokes solve is the largest
 cost at every volume fraction, 38–48 % of the call, followed by spreading; the pair
@@ -199,7 +200,7 @@ positions and forces to the GPU and the velocities back on every call, which mak
 
 A setup from scratch took from 3.4 ms at the most dilute suspension to 131 ms at the
 densest, in single precision. Table 3's values of ``\Sigma/\sigma`` were tuned for the
-paper's code; FFCM.jl's fastest values can differ.
+paper's code; ForceCouplingMethod.jl's fastest values can differ.
 
 One caveat: the smallest problem scatters more. Its calls take under 2 ms, and every 8 or
 9 calls one or two run about 0.1 ms faster or slower, so the middle half of its whole call
