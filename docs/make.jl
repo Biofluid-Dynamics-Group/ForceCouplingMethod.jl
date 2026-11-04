@@ -22,6 +22,7 @@ makedocs(;
         "Developer documentation" => [
             "Architecture" => "devdocs/architecture.md",
             "GPU architecture" => "devdocs/gpu-architecture.md",
+            "Benchmarks" => "devdocs/benchmarks.md",
         ],
     ],
     checkdocs = :exports,

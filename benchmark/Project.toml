@@ -1,8 +1,15 @@
 [deps]
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
 ForceCouplingMethod = "7a5e5976-cca4-4592-9cc6-b4f5aae2794e"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 
 [compat]
 BenchmarkTools = "1"
+CUDA = "5.8, 6.2"
+FFTW = "1.10.0"
+Statistics = "1.11"
