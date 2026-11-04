@@ -155,7 +155,7 @@ in the Julia REPL package mode. See the
 
 ## LLM assistance
 
-This repository was written with assistance of `claude-5-fable`, `claude-4.8-opus`, `claude-4.7-opus`, `claude-5-sonnet` and `claude-4.6-sonnet` in code generation, test generation, design and documentation.
+This repository was written with assistance of `claude-5.5-opus`, `claude-5-fable`, `claude-4.8-opus`, `claude-4.7-opus`, `claude-5-sonnet` and `claude-4.6-sonnet` in code generation, test generation, design and documentation.
 
 ## Contributing
 

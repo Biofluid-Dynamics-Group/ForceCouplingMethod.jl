@@ -17,11 +17,12 @@ The `fft_planning` keyword (`:estimate`, `:measure` — the default — or `:pat
 selects the FFTW planner effort. Planner effort trades construction time for transform
 time: `:estimate` plans immediately from heuristics, while `:measure` and `:patient`
 time candidate algorithms on the actual grid at construction and can produce faster
-plans for the many Stokes solves of a long resistance solve. Measured on 64³–128³
-grids, `:measure` plans ran the Stokes solve 9–22 % faster than `:estimate` for a
-one-time planning cost of roughly 0.3–1.3 s. Choose `:estimate` when construction
-latency matters more than per-call speed — small grids, one-shot evaluations. The
-solution is independent of the planner effort to round-off.
+plans for the many Stokes solves of a long resistance solve. On the benchmark machine's
+120³ and 140³ grids (see [Benchmarks](devdocs/benchmarks.md)), `:measure` plans ran the
+Stokes solve 15–35 % faster than `:estimate`, for a one-time planning cost of 0.4–0.8 s.
+Choose `:estimate` when construction latency matters more than per-call speed — small
+grids, one-shot evaluations. The solution is independent of the planner effort to
+round-off.
 
 ## FFTW wisdom
 
@@ -29,13 +30,16 @@ FFTW can cache planner results across sessions through its wisdom mechanism, wit
 ForceCouplingMethod involvement: call `FFTW.import_wisdom(path)` before constructing the
 configuration
 and `FFTW.export_wisdom(path)` after. A wisdom-loaded construction gets measured-quality
-plans at `:estimate`-like planning cost.
+plans at `:estimate`-like planning cost: on the benchmark machine a setup on a 120³ or
+140³ grid took tens of milliseconds with saved plans instead of 0.46–0.86 s without.
 
 ## FFT threading (`fft_threads`)
 
 The `fft_threads` keyword (default 1) bakes a thread count into the two FFT plans.
-Threaded transforms help on large grids — on an 8-thread machine the Stokes solve ran
-23–44 % faster at 64³/128³ — but were *slower* at 32³, so opt in for large grids only.
+Threaded transforms pay off on large grids: with 64 threads the Stokes solve ran 3–6
+times faster on 120³ and 140³ grids (see [Benchmarks](devdocs/benchmarks.md)). On small
+grids, coordinating the threads can cost more than the transform itself, so measure
+before opting in.
 Two caveats: threaded FFTW plans execute as spawned Julia tasks, which allocate on every
 call, so the allocation-free hot-path guarantee is scoped to `fft_threads = 1`; and the
 thread count is per-plan state, so it leaves no global FFTW state behind. The solution

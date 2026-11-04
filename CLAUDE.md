@@ -154,7 +154,10 @@ linear map, without a separate adapter at the call site.
   as they are validated. The only universal CUDA rule is the boundary one
   (§7): CUDA appears in `ext/`, never in `src/`.
 - The benchmark suite in `benchmark/` is the regression detector. Run it
-  before claiming a performance improvement.
+  before claiming a performance improvement. It times what a plain `julia`
+  run gives users: no system-level tweaks (socket binding, memory policies,
+  clock locks); effects of the machine are recorded as caveats with the
+  results.
 - **Type stability is strict.** No abstract types in struct fields; no
   non-`const` globals captured by hot-path functions. Every public
   hot-path function must pass `Test.@inferred` in tests; whole-module
