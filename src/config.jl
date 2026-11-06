@@ -255,6 +255,83 @@ function _fftw_planner_flag(fft_planning::Symbol)
 end
 
 """
+    _has_equal_grid_spacing(L, num_grid_points) -> Bool
+
+Whether the grid spacing `L_i / M_i` is the same along every axis, as the paper assumes
+(§3), to within a relative tolerance of `sqrt(eps(T))`.
+
+# Arguments
+- `L::NTuple{3, T}`: the domain lengths.
+- `num_grid_points::NTuple{3, Int32}`: the grid dimensions `(M_x, M_y, M_z)`, each at least
+  1.
+
+# Returns
+- `Bool`: whether the spacing is equal.
+"""
+function _has_equal_grid_spacing(
+    L::NTuple{3, T},
+    num_grid_points::NTuple{3, Int32},
+) where {T}
+    h_per_axis = ntuple(i -> L[i] / num_grid_points[i], 3)
+    tolerance = sqrt(eps(T)) * h_per_axis[1]
+    return abs(h_per_axis[2] - h_per_axis[1]) ≤ tolerance &&
+           abs(h_per_axis[3] - h_per_axis[1]) ≤ tolerance
+end
+
+"""
+    _cutoff_fits_box(R_c, L) -> Bool
+
+Whether the cutoff of the pairwise correction is at most half the smallest box length, so
+the minimum image is unambiguous and no particle is corrected against its own periodic
+image (paper §4).
+
+# Arguments
+- `R_c::T`: the cutoff radius.
+- `L::NTuple{3, T}`: the domain lengths.
+
+# Returns
+- `Bool`: whether the cutoff fits.
+"""
+_cutoff_fits_box(R_c::T, L::NTuple{3, T}) where {T} = R_c ≤ minimum(L) / T(2)
+
+"""
+    _support_fits_grid(M_G, num_grid_points) -> Bool
+
+Whether the stencil is no wider than the grid on any axis. A wider one would wrap distinct
+stencil points onto the same grid point (paper §5).
+
+# Arguments
+- `M_G::Integer`: the cubic stencil support per axis.
+- `num_grid_points::NTuple{3, Int32}`: the grid dimensions `(M_x, M_y, M_z)`.
+
+# Returns
+- `Bool`: whether the stencil fits.
+"""
+_support_fits_grid(M_G::Integer, num_grid_points::NTuple{3, Int32}) =
+    M_G ≤ minimum(num_grid_points)
+
+"""
+    _validate_fft_options(fft_planning, fft_threads)
+
+Enforces the `FFCMConfig` preconditions on the FFT choices, throwing `ArgumentError` on the
+first violation.
+
+# Arguments
+- `fft_planning::Symbol`: must be `:estimate`, `:measure`, or `:patient`.
+- `fft_threads::Integer`: must be at least 1.
+"""
+function _validate_fft_options(fft_planning::Symbol, fft_threads::Integer)
+    fft_planning in (:estimate, :measure, :patient) || throw(ArgumentError(
+        "fft_planning must be :estimate, :measure, or :patient; got " *
+        ":$(fft_planning)",
+    ))
+    fft_threads ≥ 1 || throw(ArgumentError(
+        "fft_threads must be at least 1; got $(fft_threads)",
+    ))
+    return nothing
+end
+
+"""
     _validate_config_parameters(T; L, R_c, N, a, kernel_widths_ratio, num_grid_points,
         M_G, viscosity, fft_planning, fft_threads)
 
@@ -279,8 +356,8 @@ function _validate_config_parameters(
 ) where {T <: AbstractFloat}
     R_c > zero(T) || throw(ArgumentError("R_c must be positive"))
     all(>(zero(T)), L) || throw(ArgumentError("L components must be positive"))
-    R_c ≤ minimum(L) / T(2) || throw(ArgumentError(
-        "R_c must be at most half the smallest box length;" *
+    _cutoff_fits_box(R_c, L) || throw(ArgumentError(
+        "R_c must be at most half the smallest box length; " *
         "got R_c = $(R_c), min(L)/2 = $(minimum(L) / T(2))",
     ))
     N > 0 || throw(ArgumentError("N must be positive"))
@@ -294,20 +371,14 @@ function _validate_config_parameters(
     M_G ≥ 2 || throw(ArgumentError("M_G must be at least 2; got $(M_G)"))
     all(≥(Int32(1)), num_grid_points) ||
         throw(ArgumentError("num_grid_points components must each be ≥ 1"))
-    M_G ≤ minimum(num_grid_points) || throw(ArgumentError(
+    _support_fits_grid(M_G, num_grid_points) || throw(ArgumentError(
         "M_G must not exceed the grid on any axis; got M_G = $(M_G), " *
         "min(num_grid_points) = $(minimum(num_grid_points))",
     ))
     viscosity > zero(T) || throw(ArgumentError(
         "viscosity must be positive; got $(viscosity)",
     ))
-    fft_planning in (:estimate, :measure, :patient) || throw(ArgumentError(
-        "fft_planning must be :estimate, :measure, or :patient; got " *
-        ":$(fft_planning)",
-    ))
-    fft_threads ≥ 1 || throw(ArgumentError(
-        "fft_threads must be at least 1; got $(fft_threads)",
-    ))
+    _validate_fft_options(fft_planning, fft_threads)
     return nothing
 end
 
@@ -338,15 +409,11 @@ function _derive_scalars(
     σ = a / sqrt(T(π))
     Σ = kernel_widths_ratio * σ
 
-    h_per_axis = ntuple(i -> L[i] / num_grid_points[i], 3)
-    rel_tol = sqrt(eps(T))
-    isotropic = abs(h_per_axis[2] - h_per_axis[1]) ≤ rel_tol * h_per_axis[1] &&
-                abs(h_per_axis[3] - h_per_axis[1]) ≤ rel_tol * h_per_axis[1]
-    isotropic || throw(ArgumentError(
+    _has_equal_grid_spacing(L, num_grid_points) || throw(ArgumentError(
         "anisotropic grid spacing not supported (paper §3 assumes uniform h); " *
-        "L_i/M_i = $(h_per_axis)",
+        "L_i/M_i = $(ntuple(i -> L[i] / num_grid_points[i], 3))",
     ))
-    h = h_per_axis[1]
+    h = L[1] / num_grid_points[1]
     inv_h = one(T) / h
 
     M_x, M_y, M_z = num_grid_points
@@ -356,6 +423,26 @@ function _derive_scalars(
     k_z = _wrap_wavevectors(M_z, L[3])
 
     return (; num_cells, cell_size, inv_cell_size, σ, Σ, h, inv_h, k_x, k_y, k_z)
+end
+
+"""
+    _grid_buffer_bytes(T, num_grid_points) -> Int
+
+The memory the grid-sized buffers of a configuration take (paper §3): the force density and
+fluid velocity, three real fields each, and the three half-complex fields of the
+Fourier-space solve. These dominate the memory of a configuration on any useful grid.
+
+# Arguments
+- `T::Type{<:AbstractFloat}`: the precision.
+- `num_grid_points::NTuple{3, <:Integer}`: the grid dimensions `(M_x, M_y, M_z)`.
+
+# Returns
+- `Int`: the number of bytes.
+"""
+function _grid_buffer_bytes(::Type{T}, num_grid_points::NTuple{3, <:Integer}) where {T}
+    M_x, M_y, M_z = Int.(num_grid_points)
+    real_values = 6 * M_x * M_y * M_z + 3 * 2 * (M_x ÷ 2 + 1) * M_y * M_z
+    return real_values * sizeof(T)
 end
 
 """
