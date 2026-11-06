@@ -91,6 +91,15 @@ end
     @test occursin("reference", _calibration_report(problem, fallback, 1e-3))
 end
 
+@testset "The progress message rounds the settings found, like the report" begin
+    # On this problem the searches end on values held as 0.8400000000000001 and
+    # 3.4000000000000004.
+    progress = r"Σ/Δx = \d\.\d{1,2} and λ_ε = \d+\.\d; now timing grids"
+    @test_logs (:info, progress) match_mode = :any calibrate(
+        _API_POSITIONS; L = _API_BOX, relative_tolerance = 1e-2, fft_planning = :estimate,
+    )
+end
+
 @testset "Bad requests are refused at once, saying what is wrong" begin
     Y, L = _API_POSITIONS, _API_BOX
     N = size(Y, 2)

@@ -70,8 +70,9 @@ function calibrate(
     fallback = (; settings = problem.reference_settings, tried = [])
     outcome = _tighten_until_met(tolerance, fallback) do target
         ratios = _smallest_accurate_ratios(problem, target)
-        @info "calibrate: found M_G = $(ratios.M_G), Σ/Δx = $(ratios.kernel_resolution) " *
-              "and λ_ε = $(ratios.cutoff_ratio); now timing grids"
+        @info "calibrate: found M_G = $(ratios.M_G), " *
+              "Σ/Δx = $(round(ratios.kernel_resolution; sigdigits = 3)) " *
+              "and λ_ε = $(round(ratios.cutoff_ratio; sigdigits = 3)); now timing grids"
         return _fastest_accurate_settings(problem, ratios, tolerance)
     end
     @info _calibration_report(problem, outcome, tolerance)
@@ -1013,7 +1014,8 @@ equal, which gives
 
     Δx = (V/N)^(1/3) / (c^(1/6) √(λ_ε Σ/Δx)),
 
-where `c` is the cost of a pair relative to a grid point, which depends on the machine.
+where `c` is `2π/3` times the cost of a pair relative to a grid point, which depends on the
+machine.
 
 # Arguments
 - `L::NTuple{3}`: the domain lengths.

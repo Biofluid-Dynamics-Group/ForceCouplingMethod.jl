@@ -632,7 +632,8 @@ end
 
 @testset "Starting from the ansatz beats starting from the coarsest grid" begin
     # Both walks see the same times, so timing noise can't decide the comparison. Measured
-    # on a few problems, starting from the ansatz costs at least 2.1 times less search.
+    # on a few problems, starting from the ansatz spends 1.1 to 4.6 times less on the walk,
+    # and the saving grows with the number of particles.
     problem = _STAGE_TEST_PROBLEM
     ratios = _STAGE_TEST_RATIOS
     largest_error = _STAGE_TEST_TOLERANCE - problem.reference_uncertainty
