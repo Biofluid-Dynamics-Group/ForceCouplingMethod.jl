@@ -2,6 +2,8 @@
 # test file, so every helper here is visible to all tests.
 
 using ForceCouplingMethod
+using LinearAlgebra: norm
+using Random: Xoshiro
 
 # Absolute tolerance for quantities that should be ≈ 0, where a relative
 # tolerance is ill-defined: atol ≈ rtol/100 with rtol = sqrt(eps(T)).
@@ -120,6 +122,55 @@ function _periodic_self_mobility_xx(σ::T, μ::T, Lx::T; n_max::Int = 15) where 
         s += exp(-σ^2 * k²) / (μ * k²) * (one(T) - kx * kx / k²)
     end
     return s / Lx^3
+end
+
+# Positions of `N` unit spheres placed at random in a periodic box, none overlapping
+# another, like the suspensions of the paper's §5.2. Each sphere is kept only if no earlier
+# one lies closer than a diameter. Every new sphere is compared with all the others, so this
+# suits small problems only.
+function _non_overlapping_suspension(L::NTuple{3, T}, N; seed = 2024) where {T}
+    rng = Xoshiro(seed)
+    Y = Matrix{T}(undef, 3, N)
+    placed = 0
+    while placed < N
+        candidate = ntuple(i -> L[i] * rand(rng, T), 3)
+        overlaps = any(1:placed) do other
+            separation = ntuple(3) do i
+                d = candidate[i] - Y[i, other]
+                return d - L[i] * round(d / L[i])
+            end
+            return sum(abs2, separation) < 4
+        end
+        overlaps && continue
+        placed += 1
+        Y[:, placed] .= candidate
+    end
+    return Y
+end
+
+# Standard FCM on a very fine grid, in double precision (Σ = σ, where the pair correction
+# vanishes, paper §3): the independent answer a calibration's error is checked against. It
+# sets the grid and stencil by hand and uses no calibration code.
+function _standard_fcm_velocities(Y, F, L)
+    σ = 1 / sqrt(π)
+    smallest_side = minimum(L)
+    M = nextprod((2, 3, 5, 7), ceil(Int, 2 * smallest_side / σ))
+    num_grid_points = ntuple(i -> Int32(round(Int, M * L[i] / smallest_side)), 3)
+    config = FFCMConfig{Float64}(;
+        L = Float64.(L), R_c = Float64(smallest_side) / 2, N = size(Y, 2),
+        kernel_widths_ratio = 1.0, viscosity = 1.0, num_grid_points,
+        M_G = min(31, Int(minimum(num_grid_points))), fft_planning = :estimate,
+    )
+    return mobility!(Matrix{Float64}(undef, size(Y)), config, Float64.(Y), Float64.(F))
+end
+
+# The paper's error measure (§5.1, equation (69)), written out here so that checking a
+# calibration's accuracy doesn't lean on the calibration's own code.
+function _mean_relative_error(V, exact)
+    total = sum(axes(exact, 2)) do n
+        return norm(view(V, :, n) - view(exact, :, n)) / norm(view(exact, :, n))
+    end
+    return total / size(exact, 2)
 end
 
 # Fills the config's sorted-particle buffers directly (bypassing steps 1–2)

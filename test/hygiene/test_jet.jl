@@ -63,6 +63,19 @@ end
     end
 end
 
+@testset "JET: calibration's call graph is sound" begin
+    # Calibration is cold-path code and may dispatch dynamically, but its call graph must
+    # be free of inference errors in either precision.
+    for T in (Float32, Float64)
+        L = (T(24), T(24), T(24))
+        Y = zeros(T, 3, 16)
+        F = ones(T, 3, 16)
+        @test_call ForceCouplingMethod.CalibrationProblem(
+            Y, F, L, 1e-3; fft_planning = :estimate, fft_threads = 1,
+        )
+    end
+end
+
 @testset "JET: hot path is free of runtime dispatch" begin
     for T in (Float32, Float64)
         config, Y, F, N = _jet_test_inputs(T)
