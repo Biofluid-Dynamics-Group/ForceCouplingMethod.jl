@@ -87,7 +87,8 @@ For axis ``i`` and particle ``n`` the stencil is anchored at the nearest grid po
 ``j_i = \operatorname{round}(Y_{n,i}/h)`` with ties rounding to even, and covers the
 grid indices ``j_i - \lfloor M_G/2 \rfloor + s`` for ``s = 0, \dots, M_G - 1``, wrapped
 periodically ``\bmod\ M_i``. For odd ``M_G`` the stencil is symmetric about the anchor;
-for even ``M_G`` it covers one more point below than above. Nearest-grid-point anchoring
+for even ``M_G`` it covers one more point below than above, which makes
+[odd widths the efficient choice](@ref "Odd stencil widths"). Nearest-grid-point anchoring
 is the convention the ``(M_G, \Sigma/h)`` calibration of §5 (Table 1) assumes. A
 particle near the domain edge spreads to a stencil that wraps to the opposite side,
 identically to an interior particle.

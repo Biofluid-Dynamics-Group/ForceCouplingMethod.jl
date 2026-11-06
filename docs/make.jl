@@ -15,6 +15,7 @@ makedocs(;
             "The spectral Stokes solve" => "method/stokes-solve.md",
             "The pairwise correction" => "method/pairwise-correction.md",
         ],
+        "Choosing parameters" => "choosing-parameters.md",
         "GPU acceleration" => "gpu.md",
         "Performance tips" => "performance.md",
         "Notation" => "notation.md",

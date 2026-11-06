@@ -51,7 +51,14 @@ its step; the symbols shared across steps are collected here.
   grid; the total is ``M = M_x M_y M_z``.
 - `M_G` ``= M_G`` — the per-axis width of the cubic ``M_G \times M_G \times M_G`` kernel
   stencil.
-- `h` ``= h`` — the uniform grid spacing ``h = L_i/M_i``, equal across axes.
+- `h` ``= h`` — the uniform grid spacing ``h = L_i/M_i``, equal across axes. §5 of the
+  paper, and the [Choosing parameters](choosing-parameters.md) page, write ``\Delta x``.
+- `kernel_resolution` ``= \Sigma/\Delta x`` — the grid points per Gaussian width.
+- `cutoff_ratio` ``= \lambda_\varepsilon = R_c/\Sigma`` — the reach of the pairwise
+  correction in Gaussian widths (§5.2).
+- `relative_tolerance` ``= \varepsilon`` — the largest error a calibration accepts, in the
+  measure of §5.1, equation (69).
+- ``\phi = \tfrac{4}{3}\pi a^3 N/(L_x L_y L_z)`` — the volume fraction of the suspension.
 - `k_x`, `k_y`, `k_z` — the per-axis wavenumbers ``k_i = 2\pi n_i/L_i`` of the spectral
   grid, with ``n_i`` the signed Fourier index; together they form the wavenumber vector
   ``\boldsymbol{k}``.

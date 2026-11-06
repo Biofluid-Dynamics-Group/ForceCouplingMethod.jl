@@ -205,3 +205,26 @@ paper's code; ForceCouplingMethod.jl's fastest values can differ.
 One caveat: the smallest problem scatters more. Its calls take under 2 ms, and every 8 or
 9 calls one or two run about 0.1 ms faster or slower, so the middle half of its whole call
 lies within 5 % of the median. For every other whole call it lies within about 1 %.
+
+### Calibration
+
+The times under [What it costs](@ref "What it costs") were measured on 2026-11-06 on the
+same server and software, on one Julia thread, with other programs running on the machine.
+Each is the first call of [`ForceCouplingMethod.calibrate`](@ref) in a new Julia session, so
+it includes compiling it, and the time of one call comes from the report it logs. To repeat
+one, from the repository root with `julia --project=benchmark`:
+
+```julia
+using ForceCouplingMethod
+include("benchmark/problems.jl")
+
+problem = benchmark_problem("0.05")
+Y, F = paper_suspension(Float32, problem)
+L = (Float32(BOX), Float32(BOX), Float32(BOX))
+seconds = @elapsed settings = ForceCouplingMethod.calibrate(Y; L, F)
+```
+
+The [saving from the starting grid](@ref "The starting grid") was measured the way the test
+suite checks it, in `test/accuracy/test_calibrate.jl`: each grid is timed once, and both
+walks are given the same times, so timing noise can't decide the comparison. Those runs were
+in `Float32` too.

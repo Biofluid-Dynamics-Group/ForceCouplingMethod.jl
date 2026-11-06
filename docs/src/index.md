@@ -82,13 +82,25 @@ On a machine with an NVIDIA GPU, constructing with `gpu_acceleration = true`
 (after `using CUDA`) runs the whole pipeline on the device with the same API —
 see [GPU acceleration](gpu.md).
 
+The numerical settings above are only an example. To find the fastest settings
+that meet an error you choose, on your own particles and machine, use
+`ForceCouplingMethod.calibrate`, in place of writing them by hand:
+
+```julia
+L = (L_x, L_y, L_z)
+settings = ForceCouplingMethod.calibrate(Y; L, relative_tolerance = 1e-4)
+config = FFCMConfig(; L, N, viscosity, settings...)
+```
+
+See [Choosing parameters](choosing-parameters.md).
+
 ## Reading this documentation
 
 - The [method pages](method/overview.md) explain the algorithm — the fast-FCM
   splitting and each pipeline step — citing Su & Keaveny (2024) by section and
   equation; [Notation](notation.md) maps the paper's symbols to code
   identifiers.
-- [GPU acceleration](gpu.md) and [Performance tips](performance.md) cover
-  practical use.
-- The [API reference](api.md) documents the three exported names; the
+- [Choosing parameters](choosing-parameters.md), [GPU acceleration](gpu.md) and
+  [Performance tips](performance.md) cover practical use.
+- The [API reference](api.md) documents the public names; the
   [developer documentation](devdocs/architecture.md) documents the internals.

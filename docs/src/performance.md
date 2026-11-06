@@ -5,6 +5,14 @@ and allocate freely; the operator application ([`mobility!`](@ref) and the
 [`FFCMMobility`](@ref) `mul!` methods) is allocation-free and meant to run many times —
 once per iteration of a downstream iterative solver. The knobs below tune that trade.
 
+## Choose the settings for your problem
+
+The largest lever is the method's own settings: the fastest grid can differ a lot from one
+suspension or machine to another. [`ForceCouplingMethod.calibrate`](@ref) finds the fastest
+settings that meet an error you choose, on your own particles and machine, as explained on
+the [Choosing parameters](choosing-parameters.md) page. Pass it the same `fft_planning` and
+`fft_threads` you will run with, because they change which grid is fastest.
+
 ## Warm up before timing
 
 The first `mobility!` (or `M * F`) call after loading the package incurs Julia's

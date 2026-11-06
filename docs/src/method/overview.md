@@ -29,7 +29,7 @@ decays like a Gaussian in the pair separation, so it is applied as a sparse real
 pairwise sum over neighbours within a cutoff ``R_c``. The corrected result recovers the
 ``\sigma``-regularised mobility *independent of* ``\Sigma``: the ratio ``\Sigma/\sigma``
 and the cutoff ``R_c`` become tuning parameters that trade grid work against pair work
-(§5).
+(§5), which [Choosing parameters](../choosing-parameters.md) explains how to set.
 
 ## The six-step pipeline
 

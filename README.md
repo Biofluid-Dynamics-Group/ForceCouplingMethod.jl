@@ -79,12 +79,21 @@ The first mobility call after loading the package will trigger compilation, but 
 
 ## Parameter optimisation
 
-The method has three parameters:
-- $\Sigma/\sigma$ (`kernel_widths_ratio`)
-- $R_c$ (`R_c`)
-- $M_G$ (`M_G`)
+The method has four numerical parameters (paper §5):
+- $M_G$ (`M_G`), the grid points the Gaussian covers in one direction
+- $\Sigma/\Delta x$ (through `num_grid_points`), the grid points per Gaussian width
+- $\Sigma/\sigma$ (`kernel_widths_ratio`), how much wider the computational Gaussian is than the particle's
+- $R_c/\sigma$ (`R_c`), the reach of the pair correction
 
-_Helpers to calibrate the method parameters to target hardware are planned and not yet available._
+Their best values depend on how the particles are arranged and on your machine. `ForceCouplingMethod.calibrate` finds the fastest settings that meet an error you choose, on your own particles and machine, by timing real calls. For the example above:
+
+```julia
+L = (L_x, L_y, L_z)
+settings = ForceCouplingMethod.calibrate(Y; L, relative_tolerance = 1e-4)
+config = FFCMConfig(; L, N, viscosity = μ, settings...)
+```
+
+It logs a report in the paper's notation. Calibrating runs on the processor for now; `gpu_acceleration = true` is not yet implemented for it. See [Choosing parameters](https://biofluid-dynamics-group.github.io/ForceCouplingMethod.jl/dev/choosing-parameters/) for what it does, what it costs and its limits.
 
 ## GPU acceleration
 

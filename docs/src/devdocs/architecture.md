@@ -97,6 +97,39 @@ changes must keep them green:
   wrap buffer, never in the caller's `Y`; `mobility!` writes `V` in the caller's
   original particle order.
 
+## Calibration sits on top
+
+[`ForceCouplingMethod.calibrate`](@ref) is a layer above the two-phase API. It only builds
+[`FFCMConfig`](@ref)s and calls [`mobility!`](@ref), so it knows nothing about cells,
+stencils or kernels, and the hot path does not know it exists. One function,
+`_mobility_call`, builds every configuration it times or measures. The rules of what the
+constructor accepts stay in `src/config.jl` (`_cutoff_fits_box`, `_support_fits_grid`,
+`_has_equal_grid_spacing`, `_validate_fft_options`), where `calibrate` asks them, so it can
+only propose settings the constructor would take.
+
+`src/calibrate.jl` is organised by what each piece knows, not by the stages of the
+[procedure](../choosing-parameters.md), because every stage needs the same knowledge:
+
+| Knowledge | Lives in |
+|---|---|
+| The suspension and its very accurate answer | `CalibrationProblem` |
+| The paper's error measure | `_relative_velocity_error` |
+| One accuracy trial | `_measured_error` |
+| One timed grid | `_measure_grid` |
+| Turning accuracy ratios into `FFCMConfig` settings | `_settings_on_grid` |
+| How generous "generous" is | `_generous_ratios`, `_generous_support` |
+| Where grid work and pair work balance | `_balanced_grid_spacing`, `_measuring_width` |
+| Which grids are worth trying | `_fft_friendly_grids`, `_candidate_settings` |
+| That the error only falls as a setting grows | `_smallest_passing` |
+| That time against grid is one broad, jagged hump | `_fastest_candidate` |
+| How to compare close contenders fairly | `_fastest_taking_turns` |
+| How to time a call fairly | `_median_call_time` |
+| When to tighten and when to give up | `_tighten_until_met` |
+
+The last five know nothing about the method: they take plain functions and lists, which is
+what lets the tests run them on made-up curves. Tuning values are keyword defaults explained
+in the docstring of the one function that uses them.
+
 ## Internal reference
 
 The step wrappers and buffer sub-structs, in pipeline order:
