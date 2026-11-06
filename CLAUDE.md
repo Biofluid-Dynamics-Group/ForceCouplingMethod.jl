@@ -128,6 +128,10 @@ functions (`spread_forces!`, `stokes_solve!`, …) stay reachable as
 would leak the internal decomposition and contradict the deep-module
 intent. Tests import them qualified (`using ForceCouplingMethod: spread_forces!`).
 
+`ForceCouplingMethod.calibrate` is declared `public` but not exported: it is a cold-path tool
+people call once, by its full name, and it sits on top of `FFCMConfig` and `mobility!`
+without reaching into the pipeline.
+
 **Matrix-free `mul!` interface.** `config` plus `mobility!` together
 implement (or trivially adapt to via a thin operator wrapper that closes
 over `config` and `Y`) the `LinearAlgebra` operator interface:

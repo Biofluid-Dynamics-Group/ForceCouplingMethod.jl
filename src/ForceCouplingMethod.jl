@@ -20,5 +20,6 @@ include("mobility.jl")
 include("calibrate.jl")
 
 export FFCMConfig, mobility!, FFCMMobility
+public calibrate
 
 end

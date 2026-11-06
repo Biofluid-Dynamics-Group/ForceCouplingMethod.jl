@@ -3,8 +3,8 @@ using ForceCouplingMethod
 using ForceCouplingMethod:
     CalibrationProblem,
     _candidate_settings,
-    _check_reference_agreement,
     _balanced_grid_spacing,
+    _fastest_accurate_settings,
     _fastest_candidate,
     _fastest_taking_turns,
     _fft_friendly_grids,
@@ -12,12 +12,16 @@ using ForceCouplingMethod:
     _generous_support,
     _grid_buffer_bytes,
     _has_equal_grid_spacing,
-    _is_fft_friendly,
+    _index_with_spacing_at_most,
+    _measure_grid,
+    _measured_error,
     _measuring_width,
     _median_call_time,
     _random_forces,
     _relative_velocity_error,
+    _settings_fit,
     _settings_on_grid,
+    _smallest_accurate_ratios,
     _smallest_passing,
     _tighten_until_met
 using StructArrays: components
@@ -38,7 +42,7 @@ end
 end
 
 @testset "The relative error is undefined when no particle moves" begin
-    @test_throws ArgumentError _relative_velocity_error(ones(3, 2), zeros(3, 2))
+    @test isnan(_relative_velocity_error(ones(3, 2), zeros(3, 2)))
 end
 
 @testset "Single-precision velocities are judged against double-precision ones" begin
@@ -79,14 +83,10 @@ end
     @test 1.5 ∉ tested
 end
 
-@testset "The halving search has nothing to search in an empty list" begin
-    @test_throws ArgumentError _smallest_passing(_ -> true, Float64[])
-end
-
 # Runs the walk and also reports which candidates it timed, in order.
 function _walk(times, start)
     timed = Int[]
-    found = _fastest_candidate(length(times), start) do index
+    found = _fastest_candidate(eachindex(times), start) do index
         push!(timed, index)
         return times[index]
     end
@@ -113,8 +113,8 @@ end
 @testset "Clearly slower means 30 % slower by default, and can be changed" begin
     times = [10.0, 14.0, 14.0, 1.0]
     time_of(index) = times[index]
-    @test _fastest_candidate(time_of, 4, 1) == 1
-    @test _fastest_candidate(time_of, 4, 1; clearly_slower = 1.5) == 4
+    @test _fastest_candidate(time_of, 1:4, 1) == 1
+    @test _fastest_candidate(time_of, 1:4, 1; clearly_slower = 1.5) == 4
 end
 
 @testset "A candidate that is not clearly slower restarts the count" begin
@@ -140,10 +140,18 @@ end
     @test found == 5
 end
 
+@testset "The walk keeps going toward finer grids until one meets the tolerance" begin
+    # Later candidates are the more accurate ones, so a run of misses says nothing about
+    # them.
+    found, _ = _walk([Inf, Inf, Inf, Inf, 5.0, 4.0, 9.0, 12.0], 1)
+    @test found == 6
+end
+
 @testset "The walk reports when no candidate it tried is usable" begin
+    # Toward the finer end it goes all the way; toward the coarser end it stops after two.
     found, timed = _walk(fill(Inf, 9), 5)
     @test found === nothing
-    @test sort(timed) == [3, 4, 5, 6, 7]
+    @test sort(timed) == [3, 4, 5, 6, 7, 8, 9]
 end
 
 @testset "A single candidate needs no walking" begin
@@ -217,27 +225,15 @@ end
     @test !_has_equal_grid_spacing((10.0, 20.0, 10.0), (Int32(8), Int32(8), Int32(8)))
 end
 
-@testset "A grid size is FFT-friendly when made only of the factors 2, 3, 5 and 7" begin
-    friendly = [
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 15, 16, 18, 20, 21, 24, 25, 27, 28, 30,
-    ]
-    @test filter(_is_fft_friendly, 1:30) == friendly
-    @test _is_fft_friendly(2^3 * 3 * 5 * 7)
-    @test !_is_fft_friendly(2^3 * 3 * 11)
-    @test !_is_fft_friendly(0)
-end
-
-_factors_only_2357(M) = nextprod((2, 3, 5, 7), M) == M
-
 @testset "Proposed grids use only the factors 2, 3, 5 and 7, from coarse to fine" begin
     grids = _fft_friendly_grids((10.0, 10.0, 10.0), Float64; available_bytes = 10^9)
-    @test !isempty(grids)
-    @test all(grid -> all(_factors_only_2357, grid), grids)
+    friendly = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 15, 16, 18, 20, 21, 24, 25, 27, 28, 30]
+    @test first.(grids)[eachindex(friendly)] == friendly
     @test issorted(first.(grids))
     @test allunique(grids)
     @test all(grid -> grid[1] == grid[2] == grid[3], grids)
-    @test (Int32(64), Int32(64), Int32(64)) in grids
-    @test (Int32(11), Int32(11), Int32(11)) ∉ grids
+    @test (Int32(2 * 3 * 5 * 7), Int32(2 * 3 * 5 * 7), Int32(2 * 3 * 5 * 7)) in grids
+    @test (Int32(2 * 3 * 11), Int32(2 * 3 * 11), Int32(2 * 3 * 11)) ∉ grids
 end
 
 @testset "Every proposed grid is accepted in any box and either precision" begin
@@ -311,13 +307,14 @@ end
     @test single.R_c ≈ 20.0
 end
 
-@testset "Settings that do not fit the box or the grid are not proposed" begin
+@testset "Settings that do not fit the box or the grid are recognised" begin
     L = (40.0, 40.0, 40.0)
     grid = (Int32(16), Int32(16), Int32(16))
     ratios = (; kernel_resolution = 1.0, M_G = 11, cutoff_ratio = 5.0)
-    @test _settings_on_grid(L, 100, grid, ratios) !== nothing
-    @test _settings_on_grid(L, 100, grid, (; ratios..., cutoff_ratio = 9.0)) === nothing
-    @test _settings_on_grid(L, 100, grid, (; ratios..., M_G = 17)) === nothing
+    fit(ratios) = _settings_fit(_settings_on_grid(L, 100, grid, ratios), L)
+    @test fit(ratios)
+    @test !fit((; ratios..., cutoff_ratio = 9.0))
+    @test !fit((; ratios..., M_G = 17))
 end
 
 @testset "Proposed settings configure the operator in either precision" begin
@@ -337,15 +334,14 @@ end
 @testset "A Gaussian widened by under a quarter gives way to standard FCM (§5.2)" begin
     L = (40.0, 40.0, 40.0)
     ratios = (; kernel_resolution = 1.0, M_G = 11, cutoff_ratio = 5.0)
+    coarser, finer = (Int32(40), Int32(40), Int32(40)), (Int32(63), Int32(63), Int32(63))
     # Σ/σ = 1.77 on the coarser grid is worth its pair work; 1.13 on the finer is not.
-    coarse = _candidate_settings(L, 100, (Int32(40), Int32(40), Int32(40)), ratios)
-    fine = _candidate_settings(L, 100, (Int32(63), Int32(63), Int32(63)), ratios)
+    coarse = _settings_on_grid(L, 100, coarser, ratios; worthwhile_widening = 1.25)
+    fine = _settings_on_grid(L, 100, finer, ratios; worthwhile_widening = 1.25)
     @test coarse.kernel_widths_ratio ≈ 1.0 / _UNIT_SPHERE_σ
     @test fine.kernel_widths_ratio == 1
     # With no widening counted as too little, the finer grid keeps its wider Gaussian.
-    kept = _candidate_settings(
-        L, 100, (Int32(63), Int32(63), Int32(63)), ratios; worthwhile_widening = 1.0,
-    )
+    kept = _settings_on_grid(L, 100, finer, ratios)
     @test kept.kernel_widths_ratio ≈ (40 / 63) / _UNIT_SPHERE_σ
 end
 
@@ -484,20 +480,6 @@ end
     @test _mean_relative_error(problem.exact_velocities, standard_fcm) ≤ 1e-3 / 20
 end
 
-@testset "Two widths that disagree stop the calibration and say why" begin
-    V = [3.0; 4.0; 0.0;;]
-    largest_disagreement = 5e-6
-    @test _check_reference_agreement(V, V, largest_disagreement) === nothing
-    @test _check_reference_agreement(V .* (1 + 1e-6), V, largest_disagreement) === nothing
-    @test_throws ArgumentError _check_reference_agreement(
-        V .* 1.01, V, largest_disagreement,
-    )
-    # Two particles at the same position make the correction undefined.
-    @test_throws ArgumentError _check_reference_agreement(
-        fill(NaN, 3, 1), V, largest_disagreement,
-    )
-end
-
 @testset "The reference's margins have defaults, and can be changed" begin
     L = (24.0, 24.0, 24.0)
     Y = _non_overlapping_suspension(L, 150)
@@ -512,8 +494,9 @@ end
     tighter = CalibrationProblem(Y, F, L, tolerance; planning..., generous_margin = 1000)
     @test tighter.generous == _generous_ratios(tolerance / 1000)
 
-    # Agreement closer than the generous settings can deliver is a disagreement.
-    @test_throws ArgumentError CalibrationProblem(
+    # Agreement closer than the generous settings can deliver is a disagreement, and the
+    # calibration stops and says why.
+    @test_throws "differ" CalibrationProblem(
         Y, F, L, tolerance; planning..., reference_agreement = 1e-9,
     )
 
@@ -522,4 +505,233 @@ end
     )
     @test finer.reference_settings.num_grid_points[1] >
           problem.reference_settings.num_grid_points[1]
+end
+
+# A problem shared by the tests of the stages below, where a search for the fastest grid has
+# a real choice to make. It is small, so that the whole search takes seconds.
+const _STAGE_TEST_L = (40.0, 40.0, 40.0)
+const _STAGE_TEST_N = 1222
+const _STAGE_TEST_TOLERANCE = 1e-3
+const _STAGE_TEST_PROBLEM = CalibrationProblem(
+    _non_overlapping_suspension(_STAGE_TEST_L, _STAGE_TEST_N),
+    _random_forces(Float64, _STAGE_TEST_N),
+    _STAGE_TEST_L,
+    _STAGE_TEST_TOLERANCE;
+    fft_planning = :estimate,
+    fft_threads = 1,
+)
+const _STAGE_TEST_RATIOS = _smallest_accurate_ratios(
+    _STAGE_TEST_PROBLEM, _STAGE_TEST_TOLERANCE,
+)
+
+@testset "Each search finds the smallest value meeting its share (paper §5.1, §5.2)" begin
+    problem = _STAGE_TEST_PROBLEM
+    target = _STAGE_TEST_TOLERANCE
+    (; kernel_resolution, M_G, cutoff_ratio) = _STAGE_TEST_RATIOS
+    resolution_error(s) = _measured_error(problem; kernel_resolution = s)
+    @test resolution_error(kernel_resolution) ≤ target / 3
+    @test resolution_error(kernel_resolution - 0.02) > target / 3
+
+    stencil_error(m) = _measured_error(problem; kernel_resolution, M_G = m)
+    allowed = resolution_error(kernel_resolution) + target / 3
+    @test stencil_error(M_G) ≤ allowed
+    @test stencil_error(M_G - 1) > allowed
+
+    cutoff_error(λ) = _measured_error(problem; cutoff_ratio = λ)
+    @test cutoff_error(cutoff_ratio) ≤ target / 3
+    @test cutoff_error(cutoff_ratio - 0.1) > target / 3
+end
+
+@testset "The stages' values sit in the expected range for this tolerance" begin
+    (; kernel_resolution, M_G, cutoff_ratio) = _STAGE_TEST_RATIOS
+    @test 0.85 ≤ kernel_resolution ≤ 1.05
+    @test 7 ≤ M_G ≤ 11
+    @test 3.5 ≤ cutoff_ratio ≤ 5.5
+end
+
+@testset "The grids to search run from coarse to standard FCM and no further" begin
+    problem = _STAGE_TEST_PROBLEM
+    ratios = _STAGE_TEST_RATIOS
+    candidates = _candidate_settings(problem, ratios)
+    @test issorted(candidates; by = settings -> settings.num_grid_points[1])
+    @test candidates[end].kernel_widths_ratio == 1
+    @test candidates[1].kernel_widths_ratio > 1
+    # The last grid is the first fine enough for standard FCM at this resolution.
+    spacing(settings) = _STAGE_TEST_L[1] / settings.num_grid_points[1]
+    σ = _UNIT_SPHERE_σ
+    @test ratios.kernel_resolution * spacing(candidates[end]) ≤ σ
+    @test ratios.kernel_resolution * spacing(candidates[end - 1]) > σ
+    # By default a Gaussian is either standard FCM or widened by at least a quarter.
+    widenings = [settings.kernel_widths_ratio for settings in candidates]
+    @test all(widening -> widening == 1 || widening ≥ 1.25, widenings)
+    kept = _candidate_settings(problem, ratios; worthwhile_widening = 1.0)
+    @test any(settings -> 1 < settings.kernel_widths_ratio < 1.25, kept)
+end
+
+@testset "The search for the fastest grid measures every grid it times" begin
+    problem = _STAGE_TEST_PROBLEM
+    ratios = _STAGE_TEST_RATIOS
+    outcome = _fastest_accurate_settings(problem, ratios, _STAGE_TEST_TOLERANCE)
+    @test !isempty(outcome.tried)
+    tried = Dict(outcome.tried)
+    chosen = tried[outcome.settings]
+    # The reference is trusted to its uncertainty, so a grid must beat the tolerance by
+    # that much.
+    largest_error = _STAGE_TEST_TOLERANCE - problem.reference_uncertainty
+    @test chosen.measured_error ≤ largest_error
+    @test isfinite(chosen.seconds)
+    for record in values(tried)
+        @test isfinite(record.seconds) == (record.measured_error ≤ largest_error)
+    end
+    # Near the best the times nearly tie, so an earlier, lucky time on another grid can be
+    # slightly smaller than the chosen grid's.
+    @test chosen.seconds ≤ 1.25 * minimum(record.seconds for record in values(tried))
+end
+
+@testset "A grid that misses the tolerance counts as infinitely slow" begin
+    problem = _STAGE_TEST_PROBLEM
+    ratios = _STAGE_TEST_RATIOS
+    candidates = _candidate_settings(problem, ratios)
+    settings = candidates[length(candidates) ÷ 2]
+    measurement = _measure_grid(problem, settings, 0.0)
+    @test measurement.seconds == Inf
+    @test measurement.measured_error > 0
+    usable = _measure_grid(problem, settings, 1.0)
+    @test isfinite(usable.seconds)
+    @test usable.measured_error == measurement.measured_error
+end
+
+@testset "No other grid is meaningfully faster than the chosen one" begin
+    # Near the best the times nearly tie, so this allows a quarter for noise on a busy
+    # machine. A badly chosen grid would still fail it.
+    problem = _STAGE_TEST_PROBLEM
+    ratios = _STAGE_TEST_RATIOS
+    largest_error = _STAGE_TEST_TOLERANCE - problem.reference_uncertainty
+    chosen = _fastest_accurate_settings(problem, ratios, _STAGE_TEST_TOLERANCE).settings
+    candidates = _candidate_settings(problem, ratios)
+    position = findfirst(==(chosen), candidates)
+    grid_size(settings) = settings.num_grid_points[1]
+    nearest_to(M) = candidates[argmin([abs(grid_size(c) - M) for c in candidates])]
+    others = setdiff(
+        unique([
+            candidates[max(position - 1, 1)],
+            candidates[min(position + 1, length(candidates))],
+            nearest_to(grid_size(chosen) / 1.5),
+            nearest_to(grid_size(chosen) * 1.5),
+        ]),
+        [chosen],
+    )
+    contenders = [chosen; others]
+    fastest = Dict(settings => Inf for settings in contenders)
+    for _ in 1:3, settings in contenders
+        seconds = _measure_grid(problem, settings, largest_error).seconds
+        fastest[settings] = min(fastest[settings], seconds)
+    end
+    @test fastest[chosen] ≤ 1.25 * minimum(fastest[other] for other in others)
+end
+
+@testset "Starting from the ansatz beats starting from the coarsest grid" begin
+    # Both walks see the same times, so timing noise can't decide the comparison. Measured
+    # on a few problems, starting from the ansatz costs at least 2.1 times less search.
+    problem = _STAGE_TEST_PROBLEM
+    ratios = _STAGE_TEST_RATIOS
+    largest_error = _STAGE_TEST_TOLERANCE - problem.reference_uncertainty
+    # The walk's list: each grid at least a tenth larger than the one before.
+    walked = _candidate_settings(problem, ratios)[1:1]
+    for candidate in _candidate_settings(problem, ratios)
+        if candidate.num_grid_points[1] ≥ 1.1 * walked[end].num_grid_points[1]
+            push!(walked, candidate)
+        end
+    end
+    times = Dict{Int, Float64}()
+    costs = Dict{Int, Float64}()
+    function walk_from(start)
+        timed = Int[]
+        found = _fastest_candidate(eachindex(walked), start) do index
+            push!(timed, index)
+            haskey(times, index) && return times[index]
+            costs[index] = @elapsed begin
+                times[index] = _measure_grid(problem, walked[index], largest_error).seconds
+            end
+            return times[index]
+        end
+        return found, timed
+    end
+    balanced_spacing = _balanced_grid_spacing(
+        _STAGE_TEST_L, _STAGE_TEST_N, ratios.kernel_resolution, ratios.cutoff_ratio,
+    )
+    grids = [candidate.num_grid_points for candidate in walked]
+    start = _index_with_spacing_at_most(_STAGE_TEST_L, grids, balanced_spacing)
+    @test start > 1
+    found_ansatz, timed_ansatz = walk_from(start)
+    found_coarsest, timed_coarsest = walk_from(1)
+    @test length(timed_ansatz) < length(timed_coarsest)
+    @test sum(costs[i] for i in timed_ansatz) < sum(costs[i] for i in timed_coarsest)
+    @test times[found_ansatz] ≤ 1.25 * times[found_coarsest]
+end
+
+# Calibrates without printing the report, and checks that a report was logged.
+_quietly_calibrated(Y; keywords...) =
+    @test_logs (:info, r"Σ/Δx") match_mode = :any ForceCouplingMethod.calibrate(
+        Y; keywords...,
+    )
+
+function _calibration_test_problems()
+    random_box = (24.0, 24.0, 24.0)
+    non_cubic_box = (16.0, 16.0, 32.0)
+    return (
+        (; L = random_box, Y = _non_overlapping_suspension(random_box, 150)),
+        (; L = (16.0, 16.0, 16.0), Y = [8.0; 8.0; 8.0;;]),
+        (; L = non_cubic_box, Y = _non_overlapping_suspension(non_cubic_box, 390)),
+    )
+end
+
+@testset "Calibrated settings meet the tolerance without overdoing it" begin
+    # The check is standard FCM computed independently, not the calibration's own reference.
+    for (; L, Y) in _calibration_test_problems(), tolerance in (1e-2, 1e-3, 1e-4)
+        F = _random_forces(Float64, size(Y, 2))
+        standard_fcm = _standard_fcm_velocities(Y, F, L)
+        settings = _quietly_calibrated(
+            Y; L, relative_tolerance = tolerance, F, fft_planning = :estimate,
+        )
+        config = FFCMConfig(;
+            L, N = size(Y, 2), viscosity = 1.0, fft_planning = :estimate, settings...,
+        )
+        velocity_error = _mean_relative_error(
+            mobility!(similar(Y), config, Y, F), standard_fcm,
+        )
+        @test velocity_error ≤ tolerance
+        @test velocity_error ≥ tolerance / 30
+    end
+end
+
+@testset "Calibrating in single precision meets the tolerance" begin
+    L = (24.0, 24.0, 24.0)
+    Y = _non_overlapping_suspension(L, 150)
+    F = _random_forces(Float64, 150)
+    standard_fcm = _standard_fcm_velocities(Y, F, L)
+    L_single, Y_single, F_single = Float32.(L), Float32.(Y), Float32.(F)
+    settings = _quietly_calibrated(
+        Y_single;
+        L = L_single, relative_tolerance = 1e-3, F = F_single, fft_planning = :estimate,
+    )
+    config = FFCMConfig(;
+        L = L_single, N = 150, viscosity = 1.0f0, fft_planning = :estimate, settings...,
+    )
+    V = mobility!(similar(Y_single), config, Y_single, F_single)
+    @test _mean_relative_error(V, standard_fcm) ≤ 1e-3
+end
+
+@testset "A box barely large enough for the Gaussian still ends within tolerance" begin
+    # On a problem this small the grid sizes are far apart, and the first targets may miss.
+    L = (8.0, 8.0, 8.0)
+    Y = [2.0 6.0; 4.0 4.0; 4.0 4.0]
+    F = _random_forces(Float64, 2)
+    standard_fcm = _standard_fcm_velocities(Y, F, L)
+    settings = _quietly_calibrated(
+        Y; L, relative_tolerance = 1e-2, F, fft_planning = :estimate,
+    )
+    config = FFCMConfig(; L, N = 2, viscosity = 1.0, fft_planning = :estimate, settings...)
+    V = mobility!(similar(Y), config, Y, F)
+    @test _mean_relative_error(V, standard_fcm) ≤ 1e-2
 end

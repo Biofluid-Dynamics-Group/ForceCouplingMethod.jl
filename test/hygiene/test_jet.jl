@@ -65,13 +65,20 @@ end
 
 @testset "JET: calibration's call graph is sound" begin
     # Calibration is cold-path code and may dispatch dynamically, but its call graph must
-    # be free of inference errors in either precision.
+    # be free of inference errors in either precision. The configuration's backend is chosen
+    # at run time, so the graph reaches the GPU compiler when CUDA is loaded, and
+    # `target_modules` keeps the audit to this package's code.
     for T in (Float32, Float64)
         L = (T(24), T(24), T(24))
         Y = zeros(T, 3, 16)
         F = ones(T, 3, 16)
-        @test_call ForceCouplingMethod.CalibrationProblem(
-            Y, F, L, 1e-3; fft_planning = :estimate, fft_threads = 1,
+        @test_call target_modules = (ForceCouplingMethod,) (
+            ForceCouplingMethod.CalibrationProblem(
+                Y, F, L, 1e-3; fft_planning = :estimate, fft_threads = 1,
+            )
+        )
+        @test_call target_modules = (ForceCouplingMethod,) (
+            ForceCouplingMethod.calibrate(Y; L, relative_tolerance = 1e-3)
         )
     end
 end

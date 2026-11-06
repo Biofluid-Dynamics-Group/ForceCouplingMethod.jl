@@ -17,6 +17,7 @@ function _public_keyword_names()
         methods(FFCMConfig{Float64}),
         methods(mobility!),
         methods(FFCMMobility),
+        methods(ForceCouplingMethod.calibrate),
         filter(m -> m.module === ForceCouplingMethod, collect(methods(mul!))),
         filter(m -> m.module === ForceCouplingMethod, collect(methods(*))),
     )
@@ -38,5 +39,6 @@ end
     @test :kernel_widths_ratio in keyword_names
     @test :viscosity in keyword_names
     @test :fft_planning in keyword_names
+    @test :relative_tolerance in keyword_names
     @test all(isascii ∘ String, keyword_names)
 end

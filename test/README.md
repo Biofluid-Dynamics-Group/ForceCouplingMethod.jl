@@ -11,7 +11,8 @@ order (accuracy and API files interleave step by step):
   counts are deterministic after warmup, so one sample suffices). They test
   the step *entry points* only — a zero-allocation entry bounds its callees,
   and JET walks inference into them — so internal kernels are deliberately
-  not exercised here.
+  not exercised here. `test_calibrate_api.jl` is the exception: calibration is
+  cold-path code, so it pins what calibration takes, returns, logs and refuses.
 - **`hygiene/`** (`test_aqua.jl`, `test_jet.jl`, `test_exported_surface.jl`,
   `test_ascii_public_surface.jl`) audits the package as a whole.
 - **`cuda/`** (`test_gpu_*.jl`) pins the CUDA backend: backend-selection
@@ -69,8 +70,10 @@ runs.
 | `accuracy/test_mobility.jl` | Driver contracts: caller arrays untouched, `DimensionMismatch` guards, linearity, SPD, `mul!` (3- and 5-arg), `M * F`, `issymmetric`/`isposdef` | Operator identities; the `mobility!`/`FFCMMobility` docstring contracts |
 | `accuracy/test_mobility_properties.jl` | Linearity, symmetry, positivity across seeded-random domains, grids, widths, and out-of-domain positions | Exact operator identities, reproducible RNG |
 | `accuracy/test_single_sphere_mobility.jl` | **Headline**: end-to-end self-mobility against the reciprocal-lattice regularised-Stokeslet sum; Σ-independence of the assembled operator | Paper §3 eqs. (32)–(33) lattice sum (`Float64` only: the bound is grid-truncation, which `Float32` round-off would mask) |
+| `accuracy/test_calibrate.jl` | The building blocks (error measure, searches, grids, settings, reference) and the whole calibration: tolerance met without overdoing it, no other grid meaningfully faster, the starting ansatz beats starting from the coarsest grid. Small problems, so that a calibration takes seconds | Hand-worked values and made-up curves for the blocks; standard FCM computed independently (`Σ = σ` on a fine grid, paper §3) for the tolerance |
 | `api/test_*_api.jl` (x7) | `@inferred` + zero allocations for each step entry point and the assembled operator | The hot-path contracts stated in each step's docstring |
-| `hygiene/test_exported_surface.jl` | Exports are exactly `FFCMConfig`, `mobility!`, `FFCMMobility` | The two-phase public surface (`docs/src/devdocs/architecture.md`; the `FFCMConfig`/`mobility!` docstrings) |
+| `api/test_calibrate_api.jl` | What `calibrate` returns in either precision, its defaults, inputs left untouched, the report, and every refusal | The `calibrate` docstring |
+| `hygiene/test_exported_surface.jl` | Exports are exactly `FFCMConfig`, `mobility!`, `FFCMMobility`; `calibrate` is public but not exported | The two-phase public surface (`docs/src/devdocs/architecture.md`; the `FFCMConfig`/`mobility!` docstrings) |
 | `hygiene/test_ascii_public_surface.jl` | Exported names and public keyword arguments are ASCII (typeable in any terminal); Unicode stays internal | Method introspection (`Base.kwarg_decl`), with sentinel keywords against vacuous passes |
 | `hygiene/test_aqua.jl` | Package hygiene | Aqua.jl (below) |
 | `hygiene/test_jet.jl` | Whole-call-graph inference and dispatch health | JET.jl (below) |
