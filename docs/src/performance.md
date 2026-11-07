@@ -10,8 +10,9 @@ once per iteration of a downstream iterative solver. The knobs below tune that t
 The largest lever is the method's own settings: the fastest grid can differ a lot from one
 suspension or machine to another. [`ForceCouplingMethod.calibrate`](@ref) finds the fastest
 settings that meet an error you choose, on your own particles and machine, as explained on
-the [Choosing parameters](choosing-parameters.md) page. Pass it the same `fft_planning` and
-`fft_threads` you will run with, because they change which grid is fastest.
+the [Choosing parameters](choosing-parameters.md) page. Pass it the same `fft_planning`,
+`fft_threads` and `gpu_acceleration` you will run with, because they change which grid is
+fastest.
 
 ## Warm up before timing
 

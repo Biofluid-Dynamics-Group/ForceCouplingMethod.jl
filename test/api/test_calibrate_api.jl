@@ -91,6 +91,26 @@ end
     @test occursin("reference", _calibration_report(problem, fallback, 1e-3))
 end
 
+@testset "The report says where its times were measured" begin
+    planning = (; fft_planning = :estimate, fft_threads = 1)
+    F = _random_forces(Float64, size(_API_POSITIONS, 2))
+    grid = (Int32(16), Int32(16), Int32(16))
+    settings = (; kernel_widths_ratio = 2.0, num_grid_points = grid, M_G = 9, R_c = 5.0)
+    record = (; measured_error = 3.0e-4, seconds = 0.002)
+    outcome = (; settings, tried = [settings => record])
+
+    on_processor = CalibrationProblem(_API_POSITIONS, F, _API_BOX, 1e-3; planning...)
+    @test occursin("on the processor", _calibration_report(on_processor, outcome, 1e-3))
+
+    # So little room for the very accurate calculation that it stays on the processor, so
+    # that this needs no GPU.
+    on_gpu = CalibrationProblem(
+        _API_POSITIONS, F, _API_BOX, 1e-3;
+        planning..., gpu_acceleration = true, free_gpu_bytes = 250_000,
+    )
+    @test occursin("on the GPU", _calibration_report(on_gpu, outcome, 1e-3))
+end
+
 @testset "The progress message rounds the settings found, like the report" begin
     # On this problem the searches end on values held as 0.8400000000000001 and
     # 3.4000000000000004.
@@ -169,8 +189,16 @@ end
     @test occursin("position", _refusal_message(() -> calibrate(Y; L = _API_BOX)))
 end
 
-@testset "Calibrating on the GPU is not yet implemented" begin
-    @test_throws "not yet implemented" calibrate(
-        _API_POSITIONS; L = _API_BOX, gpu_acceleration = true,
+@testset "A GPU with no room for any grid is refused, saying so" begin
+    F = _random_forces(Float64, size(_API_POSITIONS, 2))
+    message = _refusal_message(
+        () -> CalibrationProblem(
+            _API_POSITIONS, F, _API_BOX, 1e-3;
+            fft_planning = :estimate,
+            fft_threads = 1,
+            gpu_acceleration = true,
+            free_gpu_bytes = 0,
+        ),
     )
+    @test occursin("memory", message)
 end

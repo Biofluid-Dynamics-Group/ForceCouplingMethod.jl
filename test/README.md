@@ -16,8 +16,9 @@ order (accuracy and API files interleave step by step):
 - **`hygiene/`** (`test_aqua.jl`, `test_jet.jl`, `test_exported_surface.jl`,
   `test_ascii_public_surface.jl`) audits the package as a whole.
 - **`cuda/`** (`test_gpu_*.jl`) pins the CUDA backend: backend-selection
-  errors (no device needed) and CPU↔CUDA parity (one device required). See
-  *Running the GPU tests* below for how these are guarded.
+  errors (no device needed), CPU↔CUDA parity (one device required), and
+  calibration on the GPU (`test_gpu_calibrate.jl`). See *Running the GPU tests*
+  below for how these are guarded.
 
 Shared fixtures live in `test_utilities.jl`, directly under `test/`
 (standard config builder, clustered particle cloud, near-zero tolerance),
@@ -50,7 +51,9 @@ process physically cannot allocate on them and the pinned card appears as device
 the selected card (name + free memory) before the GPU tests; if it reports several
 GPUs visible and none pinned, it skips the GPU tests and prints this recipe. The
 backend-selection test (`test_gpu_backend_selection.jl`) needs no device and always
-runs.
+runs. It also checks, with a stand-in for the CUDA extension that builds on the
+processor, that a calibration for the GPU sends every calculation there and frees
+memory before each one, so that this is tested on machines without a GPU too.
 
 ## What each file pins
 

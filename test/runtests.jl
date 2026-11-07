@@ -71,6 +71,7 @@ include("test_utilities.jl")
             include("cuda/test_gpu_interpolate.jl")
             include("cuda/test_gpu_correct.jl")
             include("cuda/test_gpu_mobility.jl")
+            include("cuda/test_gpu_calibrate.jl")
         else
             @info "GPU kernels do not load on this device/toolkit (e.g. CUDA 12.9 + " *
                   "Pascal sm_61 rejects the float-to-int conversion intrinsic at module " *

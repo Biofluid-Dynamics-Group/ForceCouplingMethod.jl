@@ -26,6 +26,7 @@ import ForceCouplingMethod:
     _interpolate_velocities_kernel!,
     _min_image,
     _modified_kernel_coefficients,
+    _reclaim_gpu_memory,
     _retrieve_mobility_output!,
     _self_correction,
     _spread_forces_kernel!,

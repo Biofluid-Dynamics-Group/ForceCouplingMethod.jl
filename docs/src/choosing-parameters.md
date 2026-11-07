@@ -65,14 +65,17 @@ nothing # hide
 
 `calibrate` is public but not exported, because it is a tool you call once, by its full
 name. Only `Y` and `L` are required, and the [API reference](api.md) lists every keyword.
-Three deserve a word:
+Four deserve a word:
 
 - `relative_tolerance` is the ``\varepsilon`` you can accept. It defaults to ``10^{-4}``,
   the value §5.2 works with.
 - `F` holds the forces to measure the error with. By default they are random and repeatable,
   as in §5.1. Pass your own if you know what yours will look like.
-- `fft_planning` and `fft_threads` change which grid is fastest, so pass what you will run
-  with.
+- `fft_planning` and `fft_threads` change which grid is fastest on the processor, so pass
+  what you will run with. The GPU ignores them.
+- `gpu_acceleration = true` calibrates for the GPU, after `using CUDA`. Every trial and
+  every timing then runs there, in your precision, since the fastest grid on a GPU is not
+  the fastest on a processor.
 
 ## Reading the report
 
@@ -106,6 +109,14 @@ because the exact answer does not depend on ``\Sigma/\sigma`` (§3). If the two 
 more than ``\varepsilon/20``, `calibrate` stops and explains, as it does when two particles
 share a position. In a box too small to allow anything wider than ``\sigma``, this
 calculation simply is standard FCM.
+
+When calibrating for the GPU, this calculation runs there too, still in double precision,
+because even on consumer cards, where double precision is slow, that is far quicker than on
+the processor. [`FFCMConfig`](@ref) then warns once that `Float64` is slow on such cards.
+When you calibrate in `Float32`, that warning is about this calculation and not about your
+runs. If the GPU is short of memory, both calculations move to a wider Gaussian on a coarser
+grid, which takes more pair work but gives the same accuracy, and if even that does not fit
+they run on the processor.
 
 Standard FCM would be the simplest thing to compare with everywhere, since it needs no pair
 correction. But its grid depends on the box and not on the number of particles: at
@@ -147,7 +158,10 @@ grid means a wide Gaussian and many pairs to correct, and a fine grid means the 
 
 - **Which grids.** Their sizes are made only of the factors 2, 3, 5 and 7, where FFTs are
   fastest. They have equal spacing along all axes (§3), buffers that fit in memory,
-  ``R_c \leq \min(L)/2`` and ``M_G \leq \min(M)``.
+  ``R_c \leq \min(L)/2`` and ``M_G \leq \min(M)``. On a GPU, the grid's buffers may take
+  60 % of its free memory after the particles' buffers, which leaves room for the FFT plans:
+  on a card of 11 GB that allows a grid of 500³ in `Float32` and of 400³ in `Float64`, as we
+  found fits there.
 - **Where to look.** The walk begins at [the starting grid](@ref "The starting grid") and
   goes in both directions, in steps of at least 10 % of the grid size. Time against grid is
   one broad hump with a jagged top, so one slowdown does not mean the best has passed: in
@@ -157,6 +171,11 @@ grid means a wide Gaussian and many pairs to correct, and a fine grid means the 
   measured first. A grid above ``0.95\varepsilon`` counts as infinitely slow, because the
   very accurate answer is only trusted to within ``\varepsilon/20``. So settings that miss
   the tolerance can't be returned.
+- **Timing.** A grid's time is the median of at least three calls, after a short lead-in of
+  untimed calls: a tenth of a second on a processor and a second on a GPU, which on small
+  problems we found needs that long after a new grid is built to run at full speed again.
+  Before the first grid, calls run untimed for a second on a processor and ten seconds on a
+  GPU, so that the machine is warm.
 - **The finish.** Every size within 10 % of the best is then compared, including sizes the
   walk skipped, because FFT speed varies between sizes. The grids take turns, because
   machines speed up and slow down, and taking turns gives each grid the same conditions.
@@ -283,11 +302,13 @@ shown.
   box must allow an equal grid spacing, so they need a simple ratio.
 - **Close contenders are close.** Near the best grid the times nearly tie, so two
   calibrations can choose different grids of about the same speed.
-- **It runs on the processor for now.** `gpu_acceleration = true` is not yet implemented for
-  `calibrate`. ``M_G``, ``\Sigma/\Delta x`` and ``\lambda_\varepsilon`` only concern
-  accuracy, so the values in the report are a good start on the GPU. The fastest grid does
-  not carry over, so choose it [by hand](@ref "Setting the numbers by hand"), and check the
-  error there, since it shifts with ``\Sigma/\sigma``.
+- **Settings found for one device suit that device.** ``M_G``, ``\Sigma/\Delta x`` and
+  ``\lambda_\varepsilon`` only concern accuracy, but the fastest grid need not carry over
+  from a processor to a GPU, or from one GPU to another, so calibrate on the device you will
+  run.
+- **On a GPU, timing has a fixed cost.** The untimed lead-ins add about ten seconds, plus a
+  second for each grid timed, however quick the calls are, so even a small suspension takes
+  about half a minute to calibrate there.
 
 ## Setting the numbers by hand
 

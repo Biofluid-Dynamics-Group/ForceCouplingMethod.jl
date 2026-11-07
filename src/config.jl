@@ -177,8 +177,8 @@ the domain lengths `L`, which must be a concrete subtype of `AbstractFloat`.
 - `gpu_acceleration::Bool = false`: build the configuration on a CUDA GPU rather than the
   CPU. Requires the `CUDA` extension to be loaded (`using CUDA`) on a machine with a
   functional CUDA device; otherwise construction throws. `Float64` on the GPU emits a
-  non-fatal warning, since double-precision throughput is a fraction of single-precision
-  on consumer NVIDIA hardware.
+  non-fatal warning, once in a session, since double-precision throughput is a fraction of
+  single-precision on consumer NVIDIA hardware.
 
 # Returns
 - `FFCMConfig{T}`: the configuration `mobility!` operates on.
@@ -576,7 +576,7 @@ function FFCMConfig{T}(;
 
     if gpu_acceleration && T === Float64
         @warn "Float64 throughput on consumer NVIDIA GPUs is a fraction of Float32; " *
-              "consider Float32 for GPU runs"
+              "consider Float32 for GPU runs" maxlog = 1
     end
 
     cells, particles, grid, solver, stencil = if gpu_acceleration

@@ -107,12 +107,22 @@ constructor accepts stay in `src/config.jl` (`_cutoff_fits_box`, `_support_fits_
 `_has_equal_grid_spacing`, `_validate_fft_options`), where `calibrate` asks them, so it can
 only propose settings the constructor would take.
 
+On the GPU it needs one thing the public interface does not give: control of memory. Julia
+frees a dropped configuration only when its garbage collector runs, and CUDA.jl keeps freed
+memory and FFT plans for reuse, so trying many grids in a row would run out of memory.
+`_reclaim_gpu_memory` is declared in `src/calibrate.jl` with a fallback that throws, and the
+extension supplies its method, as it does for `_assemble_gpu_buffers`: it runs `GC.gc()`,
+then `CUDA.reclaim()`, and reports the memory free. `_mobility_call` calls it before
+building each GPU configuration.
+
 `src/calibrate.jl` is organised by what each piece knows, not by the stages of the
 [procedure](../choosing-parameters.md), because every stage needs the same knowledge:
 
 | Knowledge | Lives in |
 |---|---|
 | The suspension and its very accurate answer | `CalibrationProblem` |
+| Where the very accurate answer fits, and at what width | `_reference_calculations` |
+| What a GPU can hold | `_gpu_grid_bytes`, `_reclaim_gpu_memory` |
 | The paper's error measure | `_relative_velocity_error` |
 | One accuracy trial | `_measured_error` |
 | One timed grid | `_measure_grid` |

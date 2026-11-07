@@ -10,6 +10,7 @@ using ForceCouplingMethod:
     _fft_friendly_grids,
     _generous_ratios,
     _generous_support,
+    _gpu_grid_bytes,
     _grid_buffer_bytes,
     _has_equal_grid_spacing,
     _index_with_spacing_at_most,
@@ -18,6 +19,7 @@ using ForceCouplingMethod:
     _measuring_width,
     _median_call_time,
     _random_forces,
+    _reference_calculations,
     _relative_velocity_error,
     _settings_fit,
     _settings_on_grid,
@@ -281,6 +283,27 @@ end
           length(_fft_friendly_grids(L, Float64; available_bytes))
 end
 
+@testset "The room for grids on a GPU agrees with what has fitted on a card of 11 GB" begin
+    fits(T, M, N) = _grid_buffer_bytes(T, (M, M, M)) ≤ _gpu_grid_bytes(T, N, 11e9)
+    # The suspensions of the paper's §5.2, measured on a real card.
+    @test fits(Float32, 500, 1_955_695)
+    @test fits(Float64, 400, 488_923)
+    @test !fits(Float64, 500, 1_955_695)
+end
+
+@testset "Particles leave less room for grids on a GPU, down to none at all" begin
+    room(T, N) = _gpu_grid_bytes(T, N, 10^10)
+    @test room(Float32, 10^6) < room(Float32, 1)
+    @test room(Float64, 10^6) < room(Float32, 10^6)
+    no_room = room(Float64, 10^9)
+    @test no_room < 0
+    @test isempty(
+        _fft_friendly_grids((10.0, 10.0, 10.0), Float64; available_bytes = no_room),
+    )
+    @test _gpu_grid_bytes(Float32, 1, 100; usable_fraction = 1.0) ==
+          100 - (18 * sizeof(Float32) + 8)
+end
+
 const _UNIT_SPHERE_σ = 1 / sqrt(π)
 
 @testset "Accuracy ratios become configuration settings on a given grid (paper §5.2)" begin
@@ -381,6 +404,37 @@ end
     @test _measuring_width(L, 10^6, generous, 2.0) ≈ kernel_resolution * 2.0
 end
 
+@testset "Short of memory, the reference moves to a wider Gaussian on a coarser grid" begin
+    L = (100.0, 100.0, 100.0)
+    N = 10^5
+    generous = _generous_ratios(1e-6)
+    roomy = _fft_friendly_grids(L, Float64; available_bytes = 10^10)
+    short = _fft_friendly_grids(L, Float64; available_bytes = 10^8)
+    unhindered = _reference_calculations(L, N, generous, roomy, 0.8)
+    squeezed = _reference_calculations(L, N, generous, short, 0.8)
+
+    @test unhindered.coarser.num_grid_points[1] < unhindered.finer.num_grid_points[1]
+    @test unhindered.finer.num_grid_points[1] < short[end][1] * 2
+    @test squeezed.finer.num_grid_points == short[end]
+    @test squeezed.measuring_width > unhindered.measuring_width
+    @test squeezed.coarser.kernel_widths_ratio > unhindered.coarser.kernel_widths_ratio
+    # The settings of the finer calculation, as `FFCMConfig` takes them in either precision.
+    single = _reference_calculations(Float32.(L), N, generous, short, 0.8)
+    @test single.in_callers_precision.R_c isa Float32
+    @test single.in_callers_precision.num_grid_points == short[end]
+    @test single.in_callers_precision.R_c ≈ squeezed.finer.R_c
+end
+
+@testset "The reference reports when the grids a device can hold are too few for it" begin
+    L = (100.0, 100.0, 100.0)
+    generous = _generous_ratios(1e-6)
+    # A grid of 10³ at most: the Gaussian becomes so wide that its cutoff leaves the box.
+    tiny = _fft_friendly_grids(L, Float64; available_bytes = 10^5)
+    @test !isempty(tiny)
+    @test _reference_calculations(L, 10^5, generous, tiny, 0.8) === nothing
+    @test _reference_calculations(L, 10^5, generous, NTuple{3, Int32}[], 0.8) === nothing
+end
+
 @testset "The generous stencil is odd and covers the requested number of widths" begin
     @test _generous_support(1.0, 10.0) == 11
     @test _generous_support(1.0, 11.0) == 11
@@ -478,6 +532,37 @@ end
     )
     @test problem.exact_velocities isa Matrix{Float64}
     @test _mean_relative_error(problem.exact_velocities, standard_fcm) ≤ 1e-3 / 20
+end
+
+@testset "The right answer stays on the processor where the GPU has no room for it" begin
+    # 250 kB holds a small grid in single precision, but in double precision only a grid so
+    # coarse that the Gaussian's cutoff would leave the box. No GPU is touched here, because
+    # the calculations that stay on the processor are the only ones this test runs.
+    L = (24.0, 24.0, 24.0)
+    Y = _non_overlapping_suspension(L, 150)
+    F = _random_forces(Float64, 150)
+    standard_fcm = _standard_fcm_velocities(Y, F, L)
+    problem = CalibrationProblem(
+        Float32.(Y), Float32.(F), Float32.(L), 1e-3;
+        fft_planning = :estimate,
+        fft_threads = 1,
+        gpu_acceleration = true,
+        free_gpu_bytes = 250_000,
+    )
+    @test problem.gpu_acceleration
+    @test !problem.reference_on_gpu
+    @test !isempty(problem.grids)
+    @test all(grid -> _grid_buffer_bytes(Float32, grid) ≤ 0.6 * 250_000, problem.grids)
+    @test _mean_relative_error(problem.exact_velocities, standard_fcm) ≤ 1e-3 / 20
+end
+
+@testset "On the processor, a calibration has nothing to do with the GPU" begin
+    L = (24.0, 24.0, 24.0)
+    Y = _non_overlapping_suspension(L, 20)
+    F = _random_forces(Float64, 20)
+    problem = CalibrationProblem(Y, F, L, 1e-2; fft_planning = :estimate, fft_threads = 1)
+    @test !problem.gpu_acceleration
+    @test !problem.reference_on_gpu
 end
 
 @testset "The reference's margins have defaults, and can be changed" begin

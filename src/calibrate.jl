@@ -37,9 +37,12 @@ notation is logged with `@info`, which Julia's standard logging tools can silenc
 - `F::AbstractMatrix{T}`: the `3xN` forces to measure the error with. Read-only. Not all
   zero. By default random and repeatable, as in the paper's error measurements (§5.1).
 - `fft_planning::Symbol = :measure`, `fft_threads::Integer = 1`: as for `FFCMConfig`. They
-  change which grid is fastest, so they should match what will be run.
-- `gpu_acceleration::Bool = false`: as for `FFCMConfig`. The GPU is not yet implemented
-  here.
+  change which grid is fastest, so they should match what will be run. The GPU ignores them.
+- `gpu_acceleration::Bool = false`: as for `FFCMConfig`: calibrate for a GPU, so that every
+  trial and every timing runs there, in precision `T`, and only grids that fit its memory
+  are proposed. The very accurate calculation runs there too, in double precision whatever
+  `T` is, unless the GPU has no room for it, when it runs on the processor. Requires
+  `using CUDA` on a machine with a functional CUDA device.
 
 # Returns
 - `NamedTuple` with `kernel_widths_ratio::T`, `num_grid_points::NTuple{3, Int32}`,
@@ -49,9 +52,9 @@ notation is logged with `@info`, which Julia's standard logging tools can silenc
 - `ArgumentError`: if `T` is neither `Float32` nor `Float64`; `Y` is not `3xN` with `N ≥ 1`;
   `F` has a different size or is all zero; `Y` or `F` holds a non-finite value; `L` is not
   positive; `relative_tolerance` is outside its range; an FFT option is invalid; the box is
-  too small to hold the Gaussian; no equal-spacing grid fits in memory; or the very accurate
-  calculation at two Gaussian widths disagrees, as when two particles share a position.
-- `ErrorException`: if `gpu_acceleration = true`, which is not yet implemented.
+  too small to hold the Gaussian; no equal-spacing grid fits in memory; the very accurate
+  calculation at two Gaussian widths disagrees, as when two particles share a position; or
+  `gpu_acceleration = true` without the `CUDA` extension loaded.
 """
 function calibrate(
     Y::AbstractMatrix{T};
@@ -64,9 +67,12 @@ function calibrate(
 ) where {T <: AbstractFloat}
     tolerance = Float64(relative_tolerance)
     _validate_calibration_request(Y, F, L, tolerance, fft_planning, fft_threads)
-    gpu_acceleration && error("calibrate on the GPU is not yet implemented")
-    problem = CalibrationProblem(Y, F, L, tolerance; fft_planning, fft_threads)
-    @info "calibrate: computed the very accurate reference velocities"
+    problem = CalibrationProblem(
+        Y, F, L, tolerance; fft_planning, fft_threads, gpu_acceleration,
+    )
+    device = problem.reference_on_gpu ? "GPU" : "processor"
+    @info "calibrate: computed the very accurate reference velocities in double " *
+          "precision on the $(device)"
     fallback = (; settings = problem.reference_settings, tried = [])
     outcome = _tighten_until_met(tolerance, fallback) do target
         ratios = _smallest_accurate_ratios(problem, target)
@@ -76,6 +82,8 @@ function calibrate(
         return _fastest_accurate_settings(problem, ratios, tolerance)
     end
     @info _calibration_report(problem, outcome, tolerance)
+    # So that the configuration the caller builds next finds all of the GPU's memory free.
+    gpu_acceleration && _reclaim_gpu_memory()
     return outcome.settings
 end
 
@@ -137,6 +145,8 @@ The suspension being calibrated, with the velocities every trial is compared wit
 - `L::NTuple{3, T}`: the domain lengths.
 - `Y::Matrix{T}`, `F::Matrix{T}`: the `3xN` positions and forces.
 - `fft_planning::Symbol`, `fft_threads::Int`: the FFT choices timed grids are built with.
+- `gpu_acceleration::Bool`: whether trials and timings run on a GPU.
+- `reference_on_gpu::Bool`: whether the velocities taken as exact were computed on a GPU.
 - `grids::Vector{NTuple{3, Int32}}`: the grids worth trying in precision `T`, from coarse to
   fine.
 - `generous::@NamedTuple`: the values of `_generous_ratios` for this tolerance.
@@ -154,6 +164,8 @@ struct CalibrationProblem{T <: AbstractFloat}
     F::Matrix{T}
     fft_planning::Symbol
     fft_threads::Int
+    gpu_acceleration::Bool
+    reference_on_gpu::Bool
     grids::Vector{NTuple{3, Int32}}
     generous::@NamedTuple{
         kernel_resolution::Float64, widths_covered::Float64, cutoff_ratio::Float64,
@@ -168,8 +180,9 @@ end
 
 """
     CalibrationProblem(
-        Y, F, L, tolerance; fft_planning, fft_threads, generous_margin = 100,
-        reference_agreement = 1 / 20, finer_reference_spacing = 0.8,
+        Y, F, L, tolerance; fft_planning, fft_threads, gpu_acceleration = false,
+        free_gpu_bytes = free memory, generous_margin = 100, reference_agreement = 1 / 20,
+        finer_reference_spacing = 0.8,
     ) -> CalibrationProblem
 
 Gather the suspension and compute the velocities every trial is compared with: FFCM with
@@ -179,6 +192,10 @@ accurate calculation of Su & Keaveny (2024), §5.1. It is computed at two Gaussi
 because the exact answer doesn't depend on `Σ/σ` (§3). In a box too small to allow anything
 wider than `σ`, it is simply standard FCM.
 
+When calibrating for a GPU it runs on the GPU, where even double precision is far quicker
+than on a processor. If the GPU is short of memory it moves to a wider Gaussian on a coarser
+grid, and if it still doesn't fit it runs on the processor.
+
 # Arguments
 - `Y::AbstractMatrix{T}`, `F::AbstractMatrix{T}`: the `3xN` positions and forces.
 - `L::NTuple{3, T}`: the domain lengths.
@@ -187,6 +204,9 @@ wider than `σ`, it is simply standard FCM.
 # Keywords
 - `fft_planning::Symbol`, `fft_threads::Integer`: the FFT choices timed grids are built
   with. The reference plans instantly, since its velocities don't depend on the planner.
+- `gpu_acceleration::Bool = false`: whether trials and timings will run on a GPU.
+- `free_gpu_bytes::Real`: the memory free on the GPU, in bytes. By default the GPU's own
+  figure, once memory nothing uses has been handed back.
 - `generous_margin::Real = 100`: how many times tighter than `tolerance` the generous
   settings aim. The reference then stays about a hundredth of the tolerance from the exact
   answer, which is small beside the third of the tolerance each search works with, so it
@@ -204,9 +224,10 @@ wider than `σ`, it is simply standard FCM.
 
 # Throws
 - `ArgumentError`: if the box is too small to hold the Gaussian, if no equal-spacing grid
-  fits in memory, if the generous settings don't fit the box and the memory, or if the two
+  fits in memory, if the generous settings don't fit the box and the memory, if the two
   widths disagree or are not finite, as when two particles share a position and the
-  correction between them is undefined.
+  correction between them is undefined, or if `gpu_acceleration = true` without the `CUDA`
+  extension loaded.
 """
 function CalibrationProblem(
     Y::AbstractMatrix{T},
@@ -215,17 +236,24 @@ function CalibrationProblem(
     tolerance::Float64;
     fft_planning::Symbol,
     fft_threads::Integer,
+    gpu_acceleration::Bool = false,
+    free_gpu_bytes::Real = gpu_acceleration ? _reclaim_gpu_memory() : 0,
     generous_margin::Real = 100,
     reference_agreement::Real = 1 / 20,
     finer_reference_spacing::Real = 0.8,
 ) where {T}
     N = size(Y, 2)
     L_double = Float64.(L)
+    function grids_on_gpu(::Type{P}) where {P}
+        room = _gpu_grid_bytes(P, N, free_gpu_bytes)
+        return _fft_friendly_grids(L_double, P; available_bytes = room)
+    end
+    grids = gpu_acceleration ? grids_on_gpu(T) : _fft_friendly_grids(L_double, T)
     grids_double = _fft_friendly_grids(L_double, Float64)
-    isempty(grids_double) && throw(ArgumentError(
+    (isempty(grids) || isempty(grids_double)) && throw(ArgumentError(
         "no grid fits in memory with equal spacing along all axes and sizes made of the " *
         "factors 2, 3, 5 and 7, in a box of size $(L); a simpler ratio between the " *
-        "sides of the box would allow one",
+        "sides of the box, or more free memory, would allow one",
     ))
     generous = _generous_ratios(tolerance / generous_margin)
     # A Gaussian cut off by the box would give the same wrong answer at both widths, so the
@@ -235,34 +263,23 @@ function CalibrationProblem(
         "the box is too small to hold the Gaussian: at this tolerance its smallest side " *
         "must be at least $(smallest_box_side) sphere radii; got L = $(L)",
     ))
-    # The second reference grid is finer still, so the first has to leave it room in memory.
-    finest_spacing = L_double[1] / grids_double[end][1]
-    measuring_width = _measuring_width(
-        L_double, N, generous, finest_spacing / finer_reference_spacing,
+    plan_on_gpu = gpu_acceleration ? _reference_calculations(
+        L, N, generous, grids_on_gpu(Float64), finer_reference_spacing,
+    ) : nothing
+    reference_on_gpu = plan_on_gpu !== nothing
+    plan = reference_on_gpu ? plan_on_gpu : _reference_calculations(
+        L, N, generous, grids_double, finer_reference_spacing,
     )
-    ratios = (;
-        generous.kernel_resolution,
-        M_G = _generous_support(generous.kernel_resolution, generous.widths_covered),
-        generous.cutoff_ratio,
-    )
-    spacing = measuring_width / generous.kernel_resolution
-    coarser_index = _index_with_spacing_at_most(L_double, grids_double, spacing)
-    finer_index = _index_with_spacing_at_most(
-        L_double, grids_double, finer_reference_spacing * spacing,
-    )
-    coarser = _settings_on_grid(L_double, N, grids_double[coarser_index], ratios)
-    finer = _settings_on_grid(L_double, N, grids_double[finer_index], ratios)
-    reference_settings = _settings_on_grid(L, N, grids_double[finer_index], ratios)
-    fit = _settings_fit(coarser, L_double) && _settings_fit(finer, L_double) &&
-          _settings_fit(reference_settings, L)
-    fit || throw(ArgumentError(
+    plan === nothing && throw(ArgumentError(
         "there is no room for the very accurate reference calculation: its grid or " *
         "its cutoff doesn't fit the available memory and a box of size $(L)",
     ))
     Y_double, F_double = Matrix{Float64}(Y), Matrix{Float64}(F)
-    planning = (; fft_planning = :estimate, fft_threads)
-    V_coarser = _mobility_call(L_double, Y_double, F_double, coarser; planning...)()
-    V_finer = _mobility_call(L_double, Y_double, F_double, finer; planning...)()
+    device = (; fft_planning = :estimate, fft_threads, gpu_acceleration = reference_on_gpu)
+    V_coarser = _velocities_of_one_call(
+        L_double, Y_double, F_double, plan.coarser; device...,
+    )
+    V_finer = _velocities_of_one_call(L_double, Y_double, F_double, plan.finer; device...)
     reference_uncertainty = Float64(reference_agreement * tolerance)
     disagreement = _relative_velocity_error(V_coarser, V_finer)
     disagreement ≤ reference_uncertainty || throw(ArgumentError(
@@ -277,13 +294,70 @@ function CalibrationProblem(
         Matrix{T}(F),
         fft_planning,
         Int(fft_threads),
-        _fft_friendly_grids(L_double, T),
+        gpu_acceleration,
+        reference_on_gpu,
+        grids,
         generous,
-        measuring_width,
+        plan.measuring_width,
         V_finer,
         reference_uncertainty,
-        reference_settings,
+        plan.in_callers_precision,
     )
+end
+
+"""
+    _reference_calculations(L, N, generous, grids, finer_reference_spacing)
+        -> Union{NamedTuple, Nothing}
+
+Plans the two very accurate calculations of `CalibrationProblem` on the grids a device can
+hold, without running them. Where memory is short, `_measuring_width` moves them to a wider
+Gaussian on a coarser grid, which costs more pair work but the same accuracy.
+
+# Arguments
+- `L::NTuple{3, T}`: the domain lengths, in the precision being calibrated.
+- `N::Integer`: the number of particles.
+- `generous::NamedTuple`: as from `_generous_ratios`.
+- `grids::Vector{NTuple{3, Int32}}`: the grids the device can hold in double precision, from
+  coarse to fine. Possibly empty.
+- `finer_reference_spacing::Real`: the grid spacing of the second calculation relative to
+  the first.
+
+# Returns
+- `NamedTuple` with `measuring_width::Float64`, the Gaussian width of the first calculation;
+  `coarser` and `finer`, the settings of the two calculations in double precision; and
+  `in_callers_precision`, the settings of `finer` in precision `T`. Or `nothing` if the
+  grids can't hold them: none is given, or the settings don't fit the box or the grid.
+"""
+function _reference_calculations(
+    L::NTuple{3, T},
+    N::Integer,
+    generous::NamedTuple,
+    grids::Vector{NTuple{3, Int32}},
+    finer_reference_spacing::Real,
+) where {T}
+    isempty(grids) && return nothing
+    L_double = Float64.(L)
+    # The second grid is finer still, so the first has to leave it room in memory.
+    finest_spacing = L_double[1] / grids[end][1]
+    measuring_width = _measuring_width(
+        L_double, N, generous, finest_spacing / finer_reference_spacing,
+    )
+    ratios = (;
+        generous.kernel_resolution,
+        M_G = _generous_support(generous.kernel_resolution, generous.widths_covered),
+        generous.cutoff_ratio,
+    )
+    spacing = measuring_width / generous.kernel_resolution
+    coarser_index = _index_with_spacing_at_most(L_double, grids, spacing)
+    finer_index = _index_with_spacing_at_most(
+        L_double, grids, finer_reference_spacing * spacing,
+    )
+    coarser = _settings_on_grid(L_double, N, grids[coarser_index], ratios)
+    finer = _settings_on_grid(L_double, N, grids[finer_index], ratios)
+    in_callers_precision = _settings_on_grid(L, N, grids[finer_index], ratios)
+    fit = _settings_fit(coarser, L_double) && _settings_fit(finer, L_double) &&
+          _settings_fit(in_callers_precision, L)
+    return fit ? (; measuring_width, coarser, finer, in_callers_precision) : nothing
 end
 
 """
@@ -313,13 +387,15 @@ function _measured_error(
     M_G::Integer = _generous_support(kernel_resolution, problem.generous.widths_covered),
     cutoff_ratio::Real = problem.generous.cutoff_ratio,
 )
-    (; L, Y, F, grids, fft_threads) = problem
+    (; L, Y, F, grids, fft_threads, gpu_acceleration) = problem
     spacing = problem.measuring_width / kernel_resolution
     grid = grids[_index_with_spacing_at_most(L, grids, spacing)]
     ratios = (; kernel_resolution, M_G, cutoff_ratio)
     settings = _settings_on_grid(L, size(Y, 2), grid, ratios)
     _settings_fit(settings, L) || return Inf
-    V = _mobility_call(L, Y, F, settings; fft_planning = :estimate, fft_threads)()
+    V = _velocities_of_one_call(
+        L, Y, F, settings; fft_planning = :estimate, fft_threads, gpu_acceleration,
+    )
     return _relative_velocity_error(V, problem.exact_velocities)
 end
 
@@ -421,7 +497,7 @@ function _candidate_settings(
 end
 
 """
-    _measure_grid(problem, settings, largest_error) -> NamedTuple
+    _measure_grid(problem, settings, largest_error; lead_in_seconds) -> NamedTuple
 
 Build a configuration with these settings and the caller's FFT choices, since the FFT plans
 decide how fast the grid is, measure its error against the reference, and time it if the
@@ -431,25 +507,35 @@ settings out of the search for the fastest without any special case there.
 # Arguments
 - `problem::CalibrationProblem`: the suspension and its reference.
 - `settings::NamedTuple`: `FFCMConfig` keywords, as from `_candidate_settings`.
-- `largest_error::Float64`: the largest acceptable error.
+- `largest_error::Real`: the largest acceptable error.
+
+# Keywords
+- `lead_in_seconds::Real`: how long to run calls, untimed, before timing (see
+  `_median_call_time`). By default `0.1` on a processor and `1.0` on a GPU. Building a
+  configuration leaves a GPU idle for a moment, and we measured that on the smallest
+  suspensions fifty calls, a tenth of a second, were too few to bring its clock back up: the
+  calls came out up to a fifth slower than those after about a second.
 
 # Returns
 - `NamedTuple` with `measured_error::Float64` and `seconds::Float64`, the median time of one
   call, or `Inf` if the error is too large.
 """
 function _measure_grid(
-    problem::CalibrationProblem, settings::NamedTuple, largest_error::Float64,
+    problem::CalibrationProblem,
+    settings::NamedTuple,
+    largest_error::Real;
+    lead_in_seconds::Real = problem.gpu_acceleration ? 1.0 : 0.1,
 )
-    (; L, Y, F, fft_planning, fft_threads) = problem
-    call = _mobility_call(L, Y, F, settings; fft_planning, fft_threads)
+    (; L, Y, F, fft_planning, fft_threads, gpu_acceleration) = problem
+    call = _mobility_call(L, Y, F, settings; fft_planning, fft_threads, gpu_acceleration)
     measured_error = _relative_velocity_error(call(), problem.exact_velocities)
     measured_error ≤ largest_error || return (; measured_error, seconds = Inf)
-    return (; measured_error, seconds = _median_call_time(call))
+    return (; measured_error, seconds = _median_call_time(call; lead_in_seconds))
 end
 
 """
     _fastest_accurate_settings(
-        problem, ratios, tolerance; warm_up_seconds = 1.0, grid_step = 0.1,
+        problem, ratios, tolerance; warm_up_seconds, grid_step = 0.1,
     ) -> Union{NamedTuple, Nothing}
 
 The third stage of the procedure of Su & Keaveny (2024), §5: with the accuracy ratios known,
@@ -465,9 +551,10 @@ by the reference's uncertainty, which guarantees the true error is within the to
 - `tolerance::Float64`: the largest acceptable error.
 
 # Keywords
-- `warm_up_seconds::Real = 1.0`: how long to run calls, untimed, before timing anything. A
-  cold machine is slow for its first moments. A second is enough for a processor to reach
-  full speed.
+- `warm_up_seconds::Real`: how long to run calls, untimed, before timing anything. A cold
+  machine is slow for its first moments. By default `1.0` on a processor, which is enough to
+  reach full speed, and `10.0` on a GPU, where we measured calls up to a third slower after
+  fifty calls, and steady after about ten seconds.
 - `grid_step::Real = 0.1`: how much larger each grid walked is than the one before, as a
   fraction of its size. The time changes little over a tenth of the grid size near the best,
   so such steps find the region of the fastest grid with few grids timed. It is also how
@@ -480,10 +567,13 @@ by the reference's uncertainty, which guarantees the true error is within the to
   grid's fastest time. Or `nothing` if no grid tried met the tolerance.
 """
 function _fastest_accurate_settings(
-    problem::CalibrationProblem, ratios::NamedTuple, tolerance::Float64;
-    warm_up_seconds::Real = 1.0, grid_step::Real = 0.1,
+    problem::CalibrationProblem,
+    ratios::NamedTuple,
+    tolerance::Float64;
+    warm_up_seconds::Real = problem.gpu_acceleration ? 10.0 : 1.0,
+    grid_step::Real = 0.1,
 )
-    (; L, Y, F, fft_planning, fft_threads) = problem
+    (; L, Y) = problem
     candidates = _candidate_settings(problem, ratios)
     isempty(candidates) && return nothing
     grid_size(settings) = settings.num_grid_points[1]
@@ -509,10 +599,7 @@ function _fastest_accurate_settings(
     )
     walked_grids = [candidate.num_grid_points for candidate in walked]
     start = _index_with_spacing_at_most(L, walked_grids, balanced_spacing)
-    _median_call_time(
-        _mobility_call(L, Y, F, walked[start]; fft_planning, fft_threads);
-        lead_in_seconds = warm_up_seconds, least_calls = 1, least_seconds = 0,
-    )
+    _measure_grid(problem, walked[start], Inf; lead_in_seconds = warm_up_seconds)
     best = _fastest_candidate(time_on, walked, start)
     best === nothing && return nothing
 
@@ -557,7 +644,10 @@ function _calibration_report(
     Σ = Σ_over_σ * σ
     R_c = settings.R_c
 
-    lines = ["calibrate: $(N) particles, relative tolerance ε = $(tolerance)"]
+    device = problem.gpu_acceleration ? "GPU" : "processor"
+    lines = [
+        "calibrate: $(N) particles, relative tolerance ε = $(tolerance), on the $(device)",
+    ]
     isempty(tried) && push!(
         lines,
         "No settings searched met the tolerance, so these are the very accurate " *
@@ -597,11 +687,13 @@ function _calibration_report(
 end
 
 """
-    _mobility_call(L, Y, F, settings; fft_planning, fft_threads) -> Function
+    _mobility_call(L, Y, F, settings; fft_planning, fft_threads, gpu_acceleration)
+        -> Function
 
 A function of no arguments that applies the mobility operator with these settings. It holds
 the configuration, so dropping it frees the configuration, which matters when many large
-ones are tried in a row.
+ones are tried in a row. On a GPU, the memory of those dropped earlier is first handed back,
+since the next one may need all of it.
 
 # Arguments
 - `L::NTuple{3, T}`: the domain lengths.
@@ -609,7 +701,8 @@ ones are tried in a row.
 - `settings::NamedTuple`: `FFCMConfig` keywords, as from `_settings_on_grid`.
 
 # Keywords
-- `fft_planning::Symbol`, `fft_threads::Integer`: as for `FFCMConfig`.
+- `fft_planning::Symbol`, `fft_threads::Integer`, `gpu_acceleration::Bool`: as for
+  `FFCMConfig`.
 
 # Returns
 - A function returning the `3xN` velocities as a `Matrix{T}`, at unit viscosity, since
@@ -617,15 +710,41 @@ ones are tried in a row.
 """
 function _mobility_call(
     L::NTuple{3, T}, Y::Matrix{T}, F::Matrix{T}, settings::NamedTuple;
-    fft_planning::Symbol, fft_threads::Integer,
+    fft_planning::Symbol, fft_threads::Integer, gpu_acceleration::Bool,
 ) where {T}
+    gpu_acceleration && _reclaim_gpu_memory()
     config = FFCMConfig{T}(;
-        L, N = size(Y, 2), viscosity = one(T), fft_planning, fft_threads, settings...,
+        L,
+        N = size(Y, 2),
+        viscosity = one(T),
+        fft_planning,
+        fft_threads,
+        gpu_acceleration,
+        settings...,
     )
     V = similar(Y)
     # The backend is chosen at run time, so the compiler can't know the configuration's type
     # here, but the closure captures its exact type, so what it runs is fully specialised.
     return () -> mobility!(V, config, Y, F)
+end
+
+"""
+    _velocities_of_one_call(L, Y, F, settings; fft_planning, fft_threads, gpu_acceleration)
+        -> Matrix{T}
+
+The velocities of one call of the mobility operator with these settings. This is a function
+of its own that is never inlined, because Julia can keep a value alive until the function
+that used it returns, and a caller making several such calls needs each configuration freed
+before the next is built.
+
+# Arguments and keywords
+As for `_mobility_call`.
+
+# Returns
+- `Matrix{T}`: the `3xN` velocities.
+"""
+@noinline function _velocities_of_one_call(L, Y, F, settings; keywords...)
+    return _mobility_call(L, Y, F, settings; keywords...)()
 end
 
 """
@@ -862,6 +981,50 @@ function _median_call_time(
         push!(times, @elapsed call())
     end
     return partialsort!(times, (length(times) + 1) ÷ 2)
+end
+
+"""
+    _reclaim_gpu_memory(args...)
+
+Hands back to the GPU the memory nothing uses any more, and returns how many bytes it then
+has free. The concrete method is supplied by the `ForceCouplingMethodCUDAExt` extension;
+this fallback fires when a calibration asks for the GPU without `using CUDA` having loaded
+the extension, and reports that requirement.
+"""
+_reclaim_gpu_memory(args...) = throw(ArgumentError(
+    "gpu_acceleration = true requires the CUDA backend; run `using CUDA` on a machine " *
+    "with a functional CUDA device before calibrating on the GPU",
+))
+
+"""
+    _gpu_grid_bytes(T, N, free_bytes; usable_fraction = 0.6) -> Float64
+
+The memory the grid-sized buffers of a configuration (`_grid_buffer_bytes`) may take on a
+GPU with `free_bytes` free, after setting aside its particle-sized buffers: six `3xN`
+matrices and two index vectors. Negative if the particles alone don't fit, which no grid
+can satisfy.
+
+# Arguments
+- `T::Type{<:AbstractFloat}`: the precision.
+- `N::Integer`: the number of particles.
+- `free_bytes::Real`: the memory free on the GPU, in bytes.
+
+# Keywords
+- `usable_fraction::Real = 0.6`: the fraction of the free memory the buffers counted here
+  may take. The FFT plans come on top: their work areas, which the FFT library allocates
+  for itself, and a copy of one half-complex field, which is a ninth of the grid-sized
+  buffers. This value leaves room for them to come to five ninths more, and it agrees with
+  what we measured on a card with 11 GB: a grid of 500³ fits in `Float32`, and in
+  `Float64` 400³ fits and 500³ does not.
+
+# Returns
+- `Float64`: the number of bytes.
+"""
+function _gpu_grid_bytes(
+    ::Type{T}, N::Integer, free_bytes::Real; usable_fraction::Real = 0.6,
+) where {T}
+    particle_bytes = (18 * sizeof(T) + 8) * N
+    return usable_fraction * free_bytes - particle_bytes
 end
 
 """

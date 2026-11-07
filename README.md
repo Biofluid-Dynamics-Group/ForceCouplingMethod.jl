@@ -93,7 +93,7 @@ settings = ForceCouplingMethod.calibrate(Y; L, relative_tolerance = 1e-4)
 config = FFCMConfig(; L, N, viscosity = μ, settings...)
 ```
 
-It logs a report in the paper's notation. Calibrating runs on the processor for now; `gpu_acceleration = true` is not yet implemented for it. See [Choosing parameters](https://biofluid-dynamics-group.github.io/ForceCouplingMethod.jl/dev/choosing-parameters/) for what it does, what it costs and its limits.
+It logs a report in the paper's notation. Add `gpu_acceleration = true` to calibrate for the GPU, where every trial and timing then runs. See [Choosing parameters](https://biofluid-dynamics-group.github.io/ForceCouplingMethod.jl/dev/choosing-parameters/) for what it does, what it costs and its limits.
 
 ## GPU acceleration
 

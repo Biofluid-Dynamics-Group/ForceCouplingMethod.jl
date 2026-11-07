@@ -101,3 +101,22 @@ function _assemble_gpu_buffers(
     # a kernel.
     return (cells, particles, grid, solver, stencil)
 end
+
+"""
+    _reclaim_gpu_memory() -> Int
+
+Hands back to the GPU the memory nothing uses any more, and returns how many bytes it then
+has free. It takes two steps: `GC.gc()` frees the arrays and FFT plans no variable refers
+to, and `CUDA.reclaim()` returns their memory to the GPU, including the FFT plans' work
+areas, which CUDA.jl otherwise keeps for reuse. Adding this method to the
+`_reclaim_gpu_memory` function declared in `ForceCouplingMethod` is what lets a calibration
+run on the GPU.
+
+# Returns
+- `Int`: the number of bytes free on the GPU.
+"""
+function _reclaim_gpu_memory()
+    GC.gc()
+    CUDA.reclaim()
+    return CUDA.free_memory()
+end
