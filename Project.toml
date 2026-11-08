@@ -1,6 +1,6 @@
 name = "ForceCouplingMethod"
 uuid = "7a5e5976-cca4-4592-9cc6-b4f5aae2794e"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Pablo Zurita Soler <p.zurita23@imperial.ac.uk>", "Hang Su <hang.su16@imperial.ac.uk>"]
 
 [workspace]
