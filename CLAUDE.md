@@ -283,3 +283,8 @@ acknowledgments are one line each in `README.md` and
   The opening parenthesis stays on the original line. The closing parenthesis
   sits on its own line at the call's indent. The same staging applies to
   function definitions.
+
+- Tuning values (step sizes, margins, time budgets) used by one function are
+  keyword defaults of that function, each explained in its docstring's
+  `# Keywords` section, not module-level `const`s. A value several functions
+  share gets one owner, which the others ask.
