@@ -224,6 +224,14 @@ L = (Float32(BOX), Float32(BOX), Float32(BOX))
 seconds = @elapsed settings = ForceCouplingMethod.calibrate(Y; L, F)
 ```
 
+The GPU times were measured on 2026-11-08 on one RTX 2080 Ti of the same server, with the
+software listed for the GPU results above. The five suspensions ran one after another in
+one Julia session, so only the first includes compiling, here of both `calibrate` and the
+GPU kernels in both precisions. The time of one call is the fastest of three rounds taken
+in turns with nearby grids after the calibration, each round the median of several calls,
+and the error is measured against a very accurate answer computed afresh. To repeat one,
+start the session with `using CUDA` and pass `gpu_acceleration = true` to `calibrate`.
+
 The [saving from the starting grid](@ref "The starting grid") was measured the way the test
 suite checks it, in `test/accuracy/test_calibrate.jl`: each grid is timed once, and both
 walks are given the same times, so timing noise can't decide the comparison. Those runs were

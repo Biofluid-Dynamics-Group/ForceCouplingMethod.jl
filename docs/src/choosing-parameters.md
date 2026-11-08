@@ -290,6 +290,27 @@ of `calibrate`'s code, on 800³ and 900³ grids that agreed to better than
 ``5 \times 10^{-7}``. Against that, every error above came out the same to the two figures
 shown.
 
+On a GPU, most of the cost is fixed: ten seconds of warm-up, a second of lead-in for each
+grid timed, and about half a second for each configuration built, which there includes
+handing memory back. A calibration took about a minute whatever the size, so it is
+quicker than on the processor only for larger suspensions. These are the same suspensions
+on one RTX 2080 Ti, in `Float32`, calibrated one after another in one session, so only the
+first time includes compiling:
+
+| ``\phi`` | Particles | Calibration | Grid chosen | ``\Sigma/\sigma`` | One call | Measured error |
+|---|--:|--:|--:|--:|--:|--:|
+| 0.05 % | 7,639 | 80 s | 60³ | 12.1 | 0.90 ms | ``4.7 \times 10^{-5}`` |
+| 0.2 % | 30,557 | 61 s | 90³ | 8.2 | 3.0 ms | ``5.2 \times 10^{-5}`` |
+| 0.8 % | 122,230 | 71 s | 144³ | 5.2 | 10.7 ms | ``5.0 \times 10^{-5}`` |
+| 3.2 % | 488,923 | 72 s | 216³ | 3.4 | 40.5 ms | ``6.3 \times 10^{-5}`` |
+| 12.8 % | 1,955,695 | 99 s | 300³ | 2.4 | 163 ms | ``4.1 \times 10^{-5}`` |
+
+These errors are measured against `calibrate`'s own very accurate answer, which the test
+suite checks against the processor's. The grids are coarser than on the processor, with
+wider Gaussians, because on the GPU the pair correction is cheap beside the grid work: at
+the settings of the [benchmarks](devdocs/benchmarks.md) it takes under 5 % of a call in
+`Float32`.
+
 ## Limits
 
 - **The settings suit the positions given.** Calibrate again when the density, the
@@ -306,9 +327,9 @@ shown.
   ``\lambda_\varepsilon`` only concern accuracy, but the fastest grid need not carry over
   from a processor to a GPU, or from one GPU to another, so calibrate on the device you will
   run.
-- **On a GPU, timing has a fixed cost.** The untimed lead-ins add about ten seconds, plus a
-  second for each grid timed, however quick the calls are, so even a small suspension takes
-  about half a minute to calibrate there.
+- **On a GPU, calibrating has a fixed cost** of about a minute, however quick the calls are
+  (see [What it costs](@ref "What it costs")), so on a small suspension it can take longer
+  than on the processor.
 
 ## Setting the numbers by hand
 
